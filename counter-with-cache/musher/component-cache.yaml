@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/component-create
+#
+# A Component you do not build. This wraps the public Redis image and declares
+# what it offers the rest of the graph — which is the whole reason backing
+# services are Components and not a special kind of platform add-on.
+specVersion: v1
+kind: COMPONENT
+metadata:
+  slug: counter-cache
+spec:
+  workload:
+    kind: SERVICE
+    source:
+      type: IMAGE
+      # Pinned, like every other image reference on the platform. Publish
+      # rejects `redis:alpine` for the same reason it rejects `:latest`.
+      ref: redis:7.4.2-alpine
+    endpoints:
+      primary:
+        containerPort: 6379
+        protocol: TCP
+        # PRIVATE means mesh-only: reachable by sibling nodes in this
+        # deployment, never routable from the internet. A cache with a public
+        # URL is a cache someone else is using.
+        visibility: PRIVATE
+    envVars: []
+  contract:
+    inputs: {}
+    outputs:
+      # What this node publishes for consumers to wire.
+      #
+      # DECLARED (not DERIVED) because the value is a template this Component
+      # authors: `{{ self.privateAddress.primary }}` resolves to the mesh
+      # address of the endpoint named `primary` — `counter-cache-<app>.internal:6379`
+      # — at the moment the deployment is composed. `self.*` can only ever
+      # reference this node's own bindings and addressing, never something it
+      # was handed over a wire, which is what lets Musher resolve every node's
+      # outputs before wiring any of them.
+      url:
+        schema:
+          type: STRING
+          format: CONNECTION_STRING
+          # A Redis URL and a Postgres DSN are both CONNECTION_STRINGs and are
+          # not interchangeable. semanticType is what says so, and the publish
+          # gate rejects a wire whose two ends disagree.
+          semanticType: REDIS
+        valueFrom: DECLARED
+        value: redis://{{ self.privateAddress.primary }}
+        description: Mesh-internal Redis URL for sibling nodes in this deployment.

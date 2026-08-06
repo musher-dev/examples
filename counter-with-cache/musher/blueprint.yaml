@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/blueprint-compose
+#
+# Two nodes and one wire. This is the file that makes them an application
+# rather than two containers that happen to be deployed together.
+specVersion: v1
+kind: BLUEPRINT
+metadata:
+  slug: counter-with-cache
+spec:
+  components:
+    cache:
+      componentId: ${COUNTER_CACHE_COMPONENT_ID}
+      componentVersion: ${COUNTER_CACHE_COMPONENT_VERSION}
+      size: general.standard.small
+      connections: {}
+    web:
+      componentId: ${COUNTER_WEB_COMPONENT_ID}
+      componentVersion: ${COUNTER_WEB_COMPONENT_VERSION}
+      size: general.standard.small
+      # Connections are anchored on the consumer and keyed by the input they
+      # fill, so you read them as "cacheUrl comes from the cache node's url
+      # output". One input, one wire — a second entry for `cacheUrl` is a
+      # conflict, not an override.
+      connections:
+        cacheUrl:
+          fromRole: cache
+          fromOutput: url
+  parameters: {}

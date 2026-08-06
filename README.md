@@ -21,10 +21,10 @@ Work down the list. Each one adds a single idea to the one above it.
 | [`hello-http`](./hello-http) | One HTTP service with a public URL and a readiness probe. The whole loop, end to end. |
 | [`configurable-greeter`](./configurable-greeter) | Values the deployer chooses and secrets the platform generates. One image, many configurations. |
 | [`notes-with-volume`](./notes-with-volume) | Storage that outlives the container. |
+| [`counter-with-cache`](./counter-with-cache) | Two components wired together — a declared need met by a declared offer. |
+| [`queue-worker`](./queue-worker) | A workload with no endpoint, and one output feeding two consumers. |
 
-Two more are landing once connection materialization ships in the platform: two
-services wired together, and a background worker. See
-[CONTRIBUTING.md](./CONTRIBUTING.md) if you want to add one.
+See [CONTRIBUTING.md](./CONTRIBUTING.md) if you want to add one.
 
 ## What you need
 

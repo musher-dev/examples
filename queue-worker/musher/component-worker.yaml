@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/component-create
+#
+# A workload with nothing to route to.
+#
+# `kind: WORKER` is the whole declaration: long-running like a SERVICE, but it
+# accepts no traffic. Musher enforces that — a WORKER that declares an endpoint
+# is rejected, because the platform would have no honest way to route to it.
+#
+# There is also no readiness probe. Readiness gates *routing*, and nothing
+# routes here. What tells you a worker is healthy is its logs and the queue
+# depth it is keeping down, not an HTTP 200.
+specVersion: v1
+kind: COMPONENT
+metadata:
+  slug: queue-worker
+spec:
+  workload:
+    kind: WORKER
+    source:
+      type: IMAGE
+      ref: ${IMAGE_REF}
+    envVars:
+      - key: ROLE
+        value:
+          type: LITERAL
+          value: worker
+      - key: QUEUE_KEY
+        value:
+          type: LITERAL
+          value: jobs
+  contract:
+    inputs:
+      queueUrl:
+        schema:
+          type: STRING
+          format: CONNECTION_STRING
+          semanticType: REDIS
+        suppliedBy: CONNECTION
+        isRequired: true
+        target:
+          envVarKey: REDIS_URL
+        description: Redis URL this worker pulls jobs from.
+    outputs: {}

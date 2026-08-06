@@ -1,0 +1,50 @@
+# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/component-create
+#
+# The front door: a SERVICE with a public endpoint that accepts work and
+# reports results. Same image as the worker, different ROLE.
+specVersion: v1
+kind: COMPONENT
+metadata:
+  slug: queue-api
+spec:
+  workload:
+    kind: SERVICE
+    source:
+      type: IMAGE
+      ref: ${IMAGE_REF}
+    endpoints:
+      primary:
+        containerPort: 8080
+        protocol: HTTP
+        visibility: PUBLIC
+    health:
+      readiness:
+        path: /healthz
+        endpoint: primary
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 5
+        successThreshold: 1
+        failureThreshold: 3
+    envVars:
+      - key: ROLE
+        value:
+          type: LITERAL
+          value: api
+      - key: QUEUE_KEY
+        value:
+          type: LITERAL
+          value: jobs
+  contract:
+    inputs:
+      queueUrl:
+        schema:
+          type: STRING
+          format: CONNECTION_STRING
+          semanticType: REDIS
+        suppliedBy: CONNECTION
+        isRequired: true
+        target:
+          envVarKey: REDIS_URL
+        description: Redis URL this service pushes jobs onto.
+    outputs: {}

@@ -56,8 +56,20 @@ jobs:
         run: |
           set -euo pipefail
           example="${{ matrix.example }}"
-          probe=$(yq -r '.spec.workload.health.readiness.path // ""' \
-            "$example/musher/component.yaml")
+          # An example may declare several Components; only the ones whose
+          # image ref is the ${IMAGE_REF} placeholder are built from this
+          # Dockerfile. Probe the first of those that declares a readiness
+          # path — the rest wrap public images CI has no business starting.
+          spec=""
+          for f in "$example"/musher/component*.yaml; do
+            ref=$(yq -r '.spec.workload.source.ref // ""' "$f")
+            case "$ref" in '$'*) ;; *) continue ;; esac
+            if yq -e '.spec.workload.health.readiness.path' "$f" >/dev/null 2>&1; then
+              spec="$f"; break
+            fi
+          done
+          probe=""
+          [ -n "$spec" ] && probe=$(yq -r '.spec.workload.health.readiness.path' "$spec")
           if [ -z "$probe" ]; then
             echo "no readiness probe declared — start-only check"
             docker run --rm -d --name "ci-$example" "musher-examples/$example:ci"
@@ -66,15 +78,53 @@ jobs:
             docker rm -f "ci-$example"
             exit 0
           fi
-          port=$(yq -r '.spec.workload.endpoints.primary.containerPort' \
-            "$example/musher/component.yaml")
-          docker run --rm -d --name "ci-$example" -p "18080:$port" "musher-examples/$example:ci"
+          port=$(yq -r '.spec.workload.endpoints.primary.containerPort' "$spec")
+          bp="$example/musher/blueprint.yaml"
+          net="ci-$example-net"
+          docker network create "$net" >/dev/null
+
+          # Stand in for the platform's wiring. Every Component that wraps a
+          # public image starts as a sidecar named after its Blueprint node,
+          # and each CONNECTION input on the probed Component is resolved the
+          # way Musher resolves it: take the producer's output template and
+          # substitute the producer's address for {{ self.privateAddress.* }}.
+          declare -a env_args=()
+          for node in $(yq -r '.spec.components | keys | .[]' "$bp"); do
+            slug=$(yq -r ".spec.components.\"$node\".componentId" "$bp" \
+              | sed -n 's/^\${\(.*\)_COMPONENT_ID}$/\1/p' | tr '[:upper:]_' '[:lower:]-')
+            f=$(grep -l "slug: $slug\$" "$example"/musher/component*.yaml || true)
+            [ -n "$f" ] || continue
+            ref=$(yq -r '.spec.workload.source.ref // ""' "$f")
+            case "$ref" in '$'*) continue ;; esac
+            docker run --rm -d --network "$net" --name "$node" "$ref" >/dev/null
+            echo "sidecar $node ← $ref"
+          done
+          for input in $(yq -r '.spec.contract.inputs // {} | keys | .[]' "$spec"); do
+            [ "$(yq -r ".spec.contract.inputs.\"$input\".suppliedBy // \"USER\"" "$spec")" = CONNECTION ] || continue
+            probed_node=$(yq -r ".spec.components | to_entries | map(select(.value.connections | has(\"$input\"))) | .[0].key" "$bp")
+            from_role=$(yq -r ".spec.components.\"$probed_node\".connections.\"$input\".fromRole" "$bp")
+            from_output=$(yq -r ".spec.components.\"$probed_node\".connections.\"$input\".fromOutput" "$bp")
+            key=$(yq -r ".spec.contract.inputs.\"$input\".target.envVarKey" "$spec")
+            prod_slug=$(yq -r ".spec.components.\"$from_role\".componentId" "$bp" \
+              | sed -n 's/^\${\(.*\)_COMPONENT_ID}$/\1/p' | tr '[:upper:]_' '[:lower:]-')
+            prod=$(grep -l "slug: $prod_slug\$" "$example"/musher/component*.yaml)
+            tmpl=$(yq -r ".spec.contract.outputs.\"$from_output\".value" "$prod")
+            ep=$(sed -n 's/.*{{ self\.privateAddress\.\([a-z0-9-]*\) }}.*/\1/p' <<<"$tmpl")
+            prod_port=$(yq -r ".spec.workload.endpoints.\"$ep\".containerPort" "$prod")
+            value=$(sed "s|{{ self\.privateAddress\.$ep }}|$from_role:$prod_port|" <<<"$tmpl")
+            env_args+=(--env "$key=$value")
+            echo "wired $key=$value"
+          done
+
+          docker run --rm -d --network "$net" --name "ci-$example" \
+            "${env_args[@]}" -p "18080:$port" "musher-examples/$example:ci"
           for _ in $(seq 1 30); do
             curl -fsS "http://localhost:18080$probe" >/dev/null 2>&1 && break
             sleep 1
           done
           curl -fsS "http://localhost:18080$probe"
           docker rm -f "ci-$example"
+          docker network rm "$net" >/dev/null
 
   specs:
     name: Validate specs

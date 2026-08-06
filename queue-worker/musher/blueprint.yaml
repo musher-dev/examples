@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/blueprint-compose
+#
+# Three nodes, two wires — and one output feeding both consumers. An output is
+# not consumed by being wired; it can satisfy as many inputs as ask for it.
+specVersion: v1
+kind: BLUEPRINT
+metadata:
+  slug: queue-worker
+spec:
+  components:
+    queue:
+      componentId: ${QUEUE_REDIS_COMPONENT_ID}
+      componentVersion: ${QUEUE_REDIS_COMPONENT_VERSION}
+      size: general.standard.small
+      connections: {}
+    api:
+      componentId: ${QUEUE_API_COMPONENT_ID}
+      componentVersion: ${QUEUE_API_COMPONENT_VERSION}
+      size: general.standard.small
+      connections:
+        queueUrl:
+          fromRole: queue
+          fromOutput: url
+    worker:
+      componentId: ${QUEUE_WORKER_COMPONENT_ID}
+      componentVersion: ${QUEUE_WORKER_COMPONENT_VERSION}
+      size: general.standard.small
+      connections:
+        queueUrl:
+          fromRole: queue
+          fromOutput: url
+  parameters: {}

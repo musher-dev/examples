@@ -107,5 +107,4 @@ serve errors to users.
 
 ## Next
 
-`counter-with-cache` — two components, wired together. Landing once
-connection materialization ships in the platform.
+[`counter-with-cache`](../counter-with-cache) — two components, wired together.
