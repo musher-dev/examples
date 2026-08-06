@@ -1,0 +1,47 @@
+# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/component-create
+#
+# A Component is the reusable, versioned definition of one workload. It is a
+# definition, not a running app — you deploy a Blueprint, and a Blueprint
+# references Components.
+#
+# ${IMAGE_REF} is substituted by scripts/musher-apply.sh from the image you
+# built and pushed. Nothing else in this file needs editing.
+specVersion: v1
+kind: COMPONENT
+metadata:
+  slug: hello-http
+  # `version` is deliberately omitted. Musher allocates the next version in this
+  # slug's lineage, so re-applying after an edit gives you v2 rather than a
+  # conflict, and the old version keeps serving until you deploy the new one.
+spec:
+  workload:
+    kind: SERVICE # SERVICE | WORKER | JOB | CRON
+    source:
+      type: IMAGE
+      ref: ${IMAGE_REF}
+    endpoints:
+      primary:
+        containerPort: 8080
+        # Both of these are required on the wire — there are no defaults, and
+        # omitting either is a 422.
+        protocol: HTTP
+        visibility: PUBLIC # PUBLIC gets a routable URL; PRIVATE stays on the mesh
+    health:
+      # A SERVICE with a PUBLIC endpoint must declare a readiness probe. Musher
+      # holds traffic off an instance until this passes, so it is also what makes
+      # a redeploy seamless rather than a brief 502.
+      readiness:
+        path: /healthz
+        endpoint: primary
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 5
+        successThreshold: 1
+        failureThreshold: 3
+  contract:
+    # The contract is how a Component talks to the outside world: `inputs` are
+    # values it needs, `outputs` are values it offers to other Components.
+    # This one needs nothing and offers nothing — see configurable-greeter for
+    # inputs, and counter-with-cache for wiring outputs into inputs.
+    inputs: {}
+    outputs: {}

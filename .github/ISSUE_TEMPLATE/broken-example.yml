@@ -1,0 +1,60 @@
+name: An example does not work
+description: A build, apply, or deploy step failed when following an example's README.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A broken example is worse than a missing one — thank you for reporting it.
+
+        If this is a security issue, use
+        [Security Advisories](https://github.com/musher-dev/examples/security/advisories/new)
+        instead.
+
+  - type: input
+    id: example
+    attributes:
+      label: Which example
+      placeholder: hello-http
+    validations:
+      required: true
+
+  - type: dropdown
+    id: step
+    attributes:
+      label: Which step failed
+      options:
+        - Building the image
+        - Pushing the image
+        - Creating or publishing the Component
+        - Composing or publishing the Blueprint
+        - Deploying
+        - The deployment came up but does not respond
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The command you ran and the output. Redact your API key.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: deployment-id
+    attributes:
+      label: Deployment id
+      description: If the deploy started, this helps us trace it. Optional.
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      value: |
+        - OS:
+        - Docker version:
+        - Registry (ghcr.io, docker.io, other):
+    validations:
+      required: true

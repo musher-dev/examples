@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Musher documentation
+    url: https://docs.musher.dev
+    about: Guides and reference for the platform itself.
+  - name: Platform bug or feature request
+    url: https://github.com/musher-dev/platform/issues
+    about: For issues in Musher itself rather than in these examples.
+  - name: Security advisory
+    url: https://github.com/musher-dev/examples/security/advisories/new
+    about: Report a vulnerability privately. Please do not open a public issue.

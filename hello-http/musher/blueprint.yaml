@@ -1,0 +1,27 @@
+# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/blueprint-compose
+#
+# A Blueprint composes one or more Components into the thing you actually
+# deploy. A single-service app is just a one-Component Blueprint — there is no
+# separate "simple" path to outgrow later.
+#
+# ${HELLO_HTTP_COMPONENT_ID} and ${HELLO_HTTP_COMPONENT_VERSION} are substituted
+# by scripts/musher-apply.sh, which reads them from the Component it just
+# published. A Blueprint pins an exact Component version on purpose: publishing
+# a new Component version never silently changes a running Blueprint.
+specVersion: v1
+kind: BLUEPRINT
+metadata:
+  slug: hello-http
+spec:
+  components:
+    # The map key is the node name. It becomes the leading label of this node's
+    # hostname, so it must be a DNS label: lowercase, starting with a letter.
+    web:
+      componentId: ${HELLO_HTTP_COMPONENT_ID}
+      componentVersion: ${HELLO_HTTP_COMPONENT_VERSION}
+      # Compute is bound per node, here, not on the Component — the same
+      # Component can run small in one Blueprint and large in another.
+      # `GET /v1/reference/compute-profiles` lists what is available.
+      size: general.standard.small
+      connections: {} # nothing to wire — this app has one node
+  parameters: {} # nothing to ask the deployer for

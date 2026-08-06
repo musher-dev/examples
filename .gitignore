@@ -1,0 +1,15 @@
+# Credentials never belong here — MUSHER_API_KEY and registry tokens live in
+# your environment.
+.env
+.env.*
+!.env.example
+
+__pycache__/
+*.py[cod]
+.venv/
+node_modules/
+
+.DS_Store
+*.swp
+.idea/
+.vscode/

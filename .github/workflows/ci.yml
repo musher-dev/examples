@@ -1,0 +1,159 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly. These examples exist to work, and the way they stop working is a
+    # base image or a registry changing under them — which no PR would catch.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    name: Discover examples
+    runs-on: ubuntu-latest
+    outputs:
+      examples: ${{ steps.find.outputs.examples }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: find
+        # Any top-level directory carrying a Dockerfile is an example.
+        run: |
+          examples=$(find . -maxdepth 2 -name Dockerfile -printf '%h\n' \
+            | sed 's|^\./||' | sort | jq -R . | jq -sc .)
+          echo "examples=$examples" >> "$GITHUB_OUTPUT"
+          echo "Found: $examples"
+
+  build:
+    name: Build ${{ matrix.example }}
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: ${{ fromJSON(needs.discover.outputs.examples) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./${{ matrix.example }}
+          push: false
+          load: true
+          tags: musher-examples/${{ matrix.example }}:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Container starts and answers its readiness probe
+        run: |
+          set -euo pipefail
+          example="${{ matrix.example }}"
+          probe=$(yq -r '.spec.workload.health.readiness.path // ""' \
+            "$example/musher/component.yaml")
+          if [ -z "$probe" ]; then
+            echo "no readiness probe declared — start-only check"
+            docker run --rm -d --name "ci-$example" "musher-examples/$example:ci"
+            sleep 3
+            docker ps --filter "name=ci-$example" --format '{{.Names}}' | grep -q "ci-$example"
+            docker rm -f "ci-$example"
+            exit 0
+          fi
+          port=$(yq -r '.spec.workload.endpoints.primary.containerPort' \
+            "$example/musher/component.yaml")
+          docker run --rm -d --name "ci-$example" -p "18080:$port" "musher-examples/$example:ci"
+          for _ in $(seq 1 30); do
+            curl -fsS "http://localhost:18080$probe" >/dev/null 2>&1 && break
+            sleep 1
+          done
+          curl -fsS "http://localhost:18080$probe"
+          docker rm -f "ci-$example"
+
+  specs:
+    name: Validate specs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Every spec parses and carries the envelope
+        run: |
+          set -euo pipefail
+          status=0
+          for f in */musher/*.yaml; do
+            if ! yq -e '.specVersion == "v1"' "$f" >/dev/null 2>&1; then
+              echo "::error file=$f::missing or unsupported specVersion"; status=1; continue
+            fi
+            if ! yq -e '.kind == "COMPONENT" or .kind == "BLUEPRINT"' "$f" >/dev/null 2>&1; then
+              echo "::error file=$f::kind must be COMPONENT or BLUEPRINT"; status=1; continue
+            fi
+            yq -e 'has("metadata") and has("spec")' "$f" >/dev/null 2>&1 \
+              || { echo "::error file=$f::missing metadata or spec"; status=1; }
+            echo "ok  $f"
+          done
+          exit $status
+
+      - name: No floating image tags
+        # A floating tag builds fine and is rejected at publish. Catch it here,
+        # where the error names the file.
+        run: |
+          set -euo pipefail
+          status=0
+          for f in */musher/component*.yaml; do
+            ref=$(yq -r '.spec.workload.source.ref // ""' "$f")
+            case "$ref" in
+              '${IMAGE_REF}'|'') continue ;;
+              *:latest|*:main|*:master|*:stable|*:edge|*:nightly|*:dev|*:rolling)
+                echo "::error file=$f::floating tag '$ref' is rejected at publish"; status=1 ;;
+              *:*) ;;
+              *) echo "::error file=$f::image ref '$ref' has no tag"; status=1 ;;
+            esac
+          done
+          exit $status
+
+      - name: Every blueprint node resolves to a component file
+        run: |
+          set -euo pipefail
+          status=0
+          for bp in */musher/blueprint.yaml; do
+            dir=$(dirname "$bp")
+            slugs=$(yq -r '.metadata.slug' "$dir"/component*.yaml)
+            for node in $(yq -r '.spec.components | keys | .[]' "$bp"); do
+              ref=$(yq -r ".spec.components.\"$node\".componentId" "$bp")
+              # Placeholders are ${SLUG_COMPONENT_ID}; check the slug exists.
+              slug=$(echo "$ref" | sed -n 's/^\${\(.*\)_COMPONENT_ID}$/\1/p' \
+                | tr '[:upper:]_' '[:lower:]-')
+              if [ -n "$slug" ] && ! grep -qx "$slug" <<<"$slugs"; then
+                echo "::error file=$bp::node '$node' references unknown component '$slug'"
+                status=1
+              fi
+            done
+          done
+          exit $status
+
+  shell:
+    name: Shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck scripts/*.sh
+
+  required:
+    name: CI / required
+    if: always()
+    needs: [build, specs, shell]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any job did not succeed
+        run: |
+          results='${{ join(needs.*.result, " ") }}'
+          echo "job results: $results"
+          for r in $results; do
+            [ "$r" = "success" ] || { echo "a required job reported '$r'"; exit 1; }
+          done
