@@ -108,7 +108,9 @@ jobs:
           for f in */musher/component*.yaml; do
             ref=$(yq -r '.spec.workload.source.ref // ""' "$f")
             case "$ref" in
-              '${IMAGE_REF}'|'') continue ;;
+              # A ref starting with '$' is a placeholder the apply script
+              # substitutes at deploy time; there is no tag to judge yet.
+              '$'*|'') continue ;;
               *:latest|*:main|*:master|*:stable|*:edge|*:nightly|*:dev|*:rolling)
                 echo "::error file=$f::floating tag '$ref' is rejected at publish"; status=1 ;;
               *:*) ;;
@@ -152,7 +154,7 @@ jobs:
     steps:
       - name: Fail if any job did not succeed
         run: |
-          results='${{ join(needs.*.result, " ") }}'
+          results='${{ join(needs.*.result, ' ') }}'
           echo "job results: $results"
           for r in $results; do
             [ "$r" = "success" ] || { echo "a required job reported '$r'"; exit 1; }
