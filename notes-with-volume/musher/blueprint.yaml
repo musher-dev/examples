@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/blueprint-compose
+#
+# ${NOTES_WITH_VOLUME_COMPONENT_ID} and the matching _VERSION are substituted by
+# scripts/musher-apply.sh from the Component it just published.
+specVersion: v1
+kind: BLUEPRINT
+metadata:
+  slug: notes-with-volume
+spec:
+  components:
+    web:
+      componentId: ${NOTES_WITH_VOLUME_COMPONENT_ID}
+      componentVersion: ${NOTES_WITH_VOLUME_COMPONENT_VERSION}
+      size: general.standard.small
+      connections: {}
+  # Volumes are not declared here. The Blueprint echoes what the Component asked
+  # for; it does not get to change it.
+  parameters: {}

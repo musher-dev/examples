@@ -1,0 +1,75 @@
+# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/component-create
+#
+# The same workload as hello-http, plus a contract. `contract.inputs` is what
+# turns a fixed image into something the deployer configures — each USER input
+# becomes a field on the deploy form, and lands in the container as the
+# environment variable named by `target.envVarKey`.
+specVersion: v1
+kind: COMPONENT
+metadata:
+  slug: configurable-greeter
+spec:
+  workload:
+    kind: SERVICE
+    source:
+      type: IMAGE
+      ref: ${IMAGE_REF}
+    endpoints:
+      primary:
+        containerPort: 8080
+        protocol: HTTP
+        visibility: PUBLIC
+    health:
+      readiness:
+        path: /healthz
+        endpoint: primary
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 5
+        successThreshold: 1
+        failureThreshold: 3
+    envVars:
+      # A LITERAL is fixed by the Component — the same for every deployment of
+      # it. Use these for build/runtime facts, never for anything secret or
+      # anything a deployer should choose. Those are inputs, below.
+      - key: BUILD_CHANNEL
+        value:
+          type: LITERAL
+          value: stable
+  contract:
+    inputs:
+      greeting:
+        # A plain USER input: a field on the deploy form with a default, so a
+        # deployer can accept it and move on.
+        schema:
+          type: STRING
+          default: Hello from Musher
+        isRequired: true
+        suppliedBy: USER
+        ui:
+          label: Greeting
+        target:
+          envVarKey: GREETING
+        description: Shown on the home page. Change it and redeploy to see it update.
+
+      adminToken:
+        # A generated secret. `generator` means the platform mints the value at
+        # deploy time — the deployer never types it, it is never in this repo or
+        # in the image, and the deploy form does not ask for it.
+        #
+        # A sensitive input must not carry a `default`: a default would have to
+        # be stored and echoed, which is exactly what a secret must not be.
+        schema:
+          type: STRING
+          isSensitive: true
+        isRequired: true
+        suppliedBy: USER
+        ui:
+          label: Admin token
+        generator:
+          byteLength: 32
+          encoding: BASE64URL # HEX | BASE64 | BASE64URL | ALPHANUMERIC
+        target:
+          envVarKey: ADMIN_TOKEN
+        description: Auto-generated. Read it from the deployment's environment view.
+    outputs: {}

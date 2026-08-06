@@ -14,12 +14,16 @@ point where you have what you need.
 
 ## Start here
 
+Work down the list. Each one adds a single idea to the one above it.
+
 | Example | What it adds |
 |---|---|
 | [`hello-http`](./hello-http) | One HTTP service with a public URL and a readiness probe. The whole loop, end to end. |
+| [`configurable-greeter`](./configurable-greeter) | Values the deployer chooses and secrets the platform generates. One image, many configurations. |
+| [`notes-with-volume`](./notes-with-volume) | Storage that outlives the container. |
 
-More are landing shortly — a configurable service, a service with a persistent
-volume, two services wired together, and a background worker. See
+Two more are landing once connection materialization ships in the platform: two
+services wired together, and a background worker. See
 [CONTRIBUTING.md](./CONTRIBUTING.md) if you want to add one.
 
 ## What you need

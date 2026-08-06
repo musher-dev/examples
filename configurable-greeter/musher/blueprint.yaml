@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/blueprint-compose
+#
+# ${CONFIGURABLE_GREETER_COMPONENT_ID} and the matching _VERSION are substituted
+# by scripts/musher-apply.sh from the Component it just published.
+specVersion: v1
+kind: BLUEPRINT
+metadata:
+  slug: configurable-greeter
+spec:
+  components:
+    web:
+      componentId: ${CONFIGURABLE_GREETER_COMPONENT_ID}
+      componentVersion: ${CONFIGURABLE_GREETER_COMPONENT_VERSION}
+      size: general.standard.small
+      connections: {}
+  # Left empty on purpose. An empty `parameters` map means "derive the deploy
+  # form from the USER inputs of the Components in this graph" — so `greeting`
+  # and `adminToken` become that form without being restated here.
+  #
+  # Declare parameters explicitly only when the Blueprint needs to say something
+  # the Components cannot: renaming a field, or feeding one value to two nodes.
+  parameters: {}

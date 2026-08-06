@@ -1,0 +1,11 @@
+# Keep the build context to what the image actually needs. Everything here is
+# either documentation, platform specs the build never reads, or local cruft.
+README.md
+musher/
+.git
+.gitignore
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.venv/
+**/.DS_Store

@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/component-create
+#
+# Adds storage. `volumes` declares a claim the platform materialises as a real
+# Volume and mounts at `mountPath` — data written there survives restarts,
+# redeploys, and the instance moving to a different machine.
+#
+# Storage is declared once, here on the Component, not on the Blueprint. The
+# Blueprint decides how much compute each node gets; the Component knows what
+# the workload needs to keep.
+specVersion: v1
+kind: COMPONENT
+metadata:
+  slug: notes-with-volume
+spec:
+  workload:
+    kind: SERVICE
+    source:
+      type: IMAGE
+      ref: ${IMAGE_REF}
+    endpoints:
+      primary:
+        containerPort: 8080
+        protocol: HTTP
+        visibility: PUBLIC
+    health:
+      readiness:
+        path: /healthz
+        endpoint: primary
+        initialDelaySeconds: 5
+        periodSeconds: 10
+        timeoutSeconds: 5
+        successThreshold: 1
+        failureThreshold: 3
+    envVars:
+      - key: DATA_DIR
+        value:
+          type: LITERAL
+          value: /data
+    volumes:
+      data:
+        sizeGib: 1
+        mountPath: /data
+        isReadOnly: false
+        # READ_WRITE_ONCE gives this node its own block volume, attached to one
+        # replica at a time. That is why this example deploys with replicas: 1 —
+        # two replicas would each want the same single-attach volume.
+        #
+        # READ_WRITE_MANY is the shared-filesystem alternative, mountable by
+        # every replica at once. Reach for it when replicas must see the same
+        # files; reach for a database when they must agree on the same records.
+        accessMode: READ_WRITE_ONCE
+  contract:
+    inputs: {}
+    outputs: {}
