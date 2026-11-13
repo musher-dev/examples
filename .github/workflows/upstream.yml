@@ -1,0 +1,31 @@
+name: Upstream drift
+
+# The examples pin a specification release and an OpenAPI description
+# (pins/pins.json), so CI on a pull request never changes under it. This is the
+# other half: once a week it asks whether upstream has moved past those pins,
+# and fails, naming the command to run, when it has. Dependabot cannot track
+# either, so a scheduled check is the cheap option.
+
+on:
+  schedule:
+    - cron: "41 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  JSONSCHEMA_VERSION: "4.23.0"
+
+jobs:
+  drift:
+    name: Pins are current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python3 -m pip install --quiet "jsonschema==$JSONSCHEMA_VERSION"
+      - name: Newer specification, or a live API the examples no longer match
+        run: sh scripts/check/upstream.sh

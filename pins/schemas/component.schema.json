@@ -1,0 +1,1669 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specifications.musher.dev/component/v2.1.0/component.schema.json",
+  "title": "Musher Component Document",
+  "description": "A reusable, versioned definition that a blueprint node deploys: what the platform runs (a workload, with its source, build recipe, command, endpoints, storage and probes, or nothing, for an EXTERNAL component) and the component contract, the inputs it consumes and the outputs it produces.",
+  "$comment": "Structural rules only. Semantic rules (what an origin, a probe or a build secret names, value schemas, mounts and schedules) and the admission rules of publication are separate validation phases. See spec.md.",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "description": "Document kind discriminator. Must be COMPONENT.",
+      "const": "COMPONENT",
+      "type": "string"
+    },
+    "metadata": {
+      "$ref": "#/$defs/ComponentMetadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/ComponentSpec"
+    },
+    "specVersion": {
+      "description": "Major version of the Musher document format.",
+      "enum": [
+        "v2"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "specVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "type": "object",
+  "$defs": {
+    "ComponentBasicAuth": {
+      "additionalProperties": false,
+      "properties": {
+        "password": {
+          "description": "Password; a sensitive input, never a literal.",
+          "$ref": "#/$defs/ComponentProbeCredential"
+        },
+        "username": {
+          "description": "User name, literal or from an input.",
+          "$ref": "#/$defs/ComponentProbeCredential"
+        }
+      },
+      "required": [
+        "username",
+        "password"
+      ],
+      "type": "object"
+    },
+    "ComponentBearerAuth": {
+      "additionalProperties": false,
+      "properties": {
+        "token": {
+          "description": "Token; a sensitive input, never a literal.",
+          "$ref": "#/$defs/ComponentProbeCredential"
+        }
+      },
+      "required": [
+        "token"
+      ],
+      "type": "object"
+    },
+    "ComponentBuild": {
+      "description": "The build recipe: how the platform builds an image from a git or upload source.",
+      "$comment": "spec.md §5.1 COMP-BUILD-001..004 / ADR 0040 §3. The build recipe: the context, exactly one of dockerfile and buildpacks, arguments and secrets. Named in the document and never detected (COMP-BUILD-007). A path segment holds a character other than a dot, so none is . or .., and the patterns are lookahead-free so they compile under RE2 as well as ECMA-262.",
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "dockerfile": true
+          },
+          "required": [
+            "dockerfile"
+          ]
+        },
+        {
+          "properties": {
+            "buildpacks": true
+          },
+          "required": [
+            "buildpacks"
+          ]
+        }
+      ],
+      "properties": {
+        "arguments": {
+          "description": "Build arguments keyed by name (Docker ARG, or a buildpacks build environment variable). Non-sensitive literals only: a value that must stay secret is a build secret.",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "propertyNames": {
+            "$comment": "spec.md §5.1 COMP-BUILD-003 / ADR 0007 §4. A build argument becomes an environment variable of the build, so it takes the environment-variable grammar.",
+            "maxLength": 128,
+            "pattern": "^[A-Z_][A-Z0-9_]*$"
+          },
+          "type": "object",
+          "x-additionalPropertiesName": "argumentName"
+        },
+        "buildpacks": {
+          "description": "Build with Cloud Native Buildpacks.",
+          "$ref": "#/$defs/ComponentBuildpacks"
+        },
+        "context": {
+          "description": "Directory, relative to the source root, that is the whole build context. The build reads nothing outside it. Omitted, the source root.",
+          "default": ".",
+          "maxLength": 512,
+          "pattern": "^(?:\\.|[^/\\\\\\u0000-\\u001f\\u007f]*[^/.\\\\\\u0000-\\u001f\\u007f][^/\\\\\\u0000-\\u001f\\u007f]*(?:/[^/\\\\\\u0000-\\u001f\\u007f]*[^/.\\\\\\u0000-\\u001f\\u007f][^/\\\\\\u0000-\\u001f\\u007f]*)*)$",
+          "type": "string"
+        },
+        "dockerfile": {
+          "description": "Build with the Dockerfile at this path, relative to context.",
+          "maxLength": 512,
+          "pattern": "^[^/\\\\\\u0000-\\u001f\\u007f]*[^/.\\\\\\u0000-\\u001f\\u007f][^/\\\\\\u0000-\\u001f\\u007f]*(?:/[^/\\\\\\u0000-\\u001f\\u007f]*[^/.\\\\\\u0000-\\u001f\\u007f][^/\\\\\\u0000-\\u001f\\u007f]*)*$",
+          "type": "string"
+        },
+        "secrets": {
+          "description": "Build secrets keyed by ID, each read from one of the component’s own sensitive inputs. Mounted for the build only, and never written into an image layer, the build provenance, the build log or the launch environment.",
+          "additionalProperties": {
+            "description": "Own sensitive, required string input supplying the secret.",
+            "$ref": "#/$defs/ComponentInputReference"
+          },
+          "propertyNames": {
+            "$comment": "spec.md §5.1 COMP-BUILD-004. The ID is the BuildKit secret id and the buildpacks env file name, in the environment-variable grammar so that it cannot collide with an argument in a different spelling.",
+            "maxLength": 128,
+            "pattern": "^[A-Z_][A-Z0-9_]*$"
+          },
+          "type": "object",
+          "x-additionalPropertiesName": "secretID"
+        }
+      },
+      "type": "object"
+    },
+    "ComponentBuildpacks": {
+      "additionalProperties": false,
+      "properties": {
+        "builderImage": {
+          "description": "Cloud Native Buildpacks builder, as an OCI image reference.",
+          "$ref": "#/$defs/ComponentImageReference"
+        }
+      },
+      "required": [
+        "builderImage"
+      ],
+      "type": "object"
+    },
+    "ComponentConnection": {
+      "description": "The connection this input stands for: the members of one protocol, acquired together.",
+      "$comment": "spec.md §6.4 COMP-CONNECTION-002 / COMP-CONNECTION-003 / ADR 0039 §3. The protocol fixes the members, their types and their sensitivity, so a connection input carries no schema of its own. capabilities exists only on the language-model protocols.",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "capabilities": false
+            }
+          },
+          "if": {
+            "properties": {
+              "protocol": {
+                "enum": [
+                  "OPENAI_CHAT_COMPLETIONS",
+                  "ANTHROPIC_MESSAGES"
+                ]
+              }
+            },
+            "required": [
+              "protocol"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "capabilities": {
+          "description": "Required protocol features, on a language-model protocol only. Omitted, only ordinary non-streaming text conversation is required.",
+          "items": {
+            "enum": [
+              "STREAMING",
+              "TOOL_CALLS"
+            ],
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "protocol": {
+          "description": "The wire contract a client speaks, named for that contract rather than for whoever serves it. It fixes the members.",
+          "enum": [
+            "OPENAI_CHAT_COMPLETIONS",
+            "ANTHROPIC_MESSAGES",
+            "POSTGRES",
+            "REDIS",
+            "S3",
+            "TELEGRAM_BOT",
+            "SLACK_APP",
+            "DISCORD_BOT"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "protocol"
+      ],
+      "type": "object"
+    },
+    "ComponentContract": {
+      "additionalProperties": false,
+      "properties": {
+        "inputs": {
+          "description": "Typed input declarations keyed by input name.",
+          "additionalProperties": {
+            "$ref": "#/$defs/ComponentInput"
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "pattern": "^[a-z][a-zA-Z0-9]{0,63}$"
+          },
+          "type": "object"
+        },
+        "outputs": {
+          "description": "Typed output declarations keyed by output name.",
+          "additionalProperties": {
+            "$ref": "#/$defs/ComponentOutput"
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "pattern": "^[a-z][a-zA-Z0-9]{0,63}$"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "ComponentEndpoint": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "$comment": "spec.md §5.2 COMP-EP-005. Only HTTPS is TLS on the hop to the workload in v2, so only an HTTPS endpoint carries a trust policy.",
+          "if": {
+            "not": {
+              "properties": {
+                "protocol": {
+                  "const": "HTTPS"
+                }
+              },
+              "required": [
+                "protocol"
+              ]
+            }
+          },
+          "then": {
+            "properties": {
+              "tls": false
+            }
+          }
+        },
+        {
+          "$comment": "spec.md §5.2 COMP-EP-013 / COMP-EP-015. An OpenID Connect client and exemptible requests exist only on an HTTP-routed endpoint (HTTP, HTTPS, WS), where the platform can sign a viewer in.",
+          "if": {
+            "not": {
+              "properties": {
+                "protocol": {
+                  "enum": [
+                    "HTTP",
+                    "HTTPS",
+                    "WS"
+                  ]
+                }
+              },
+              "required": [
+                "protocol"
+              ]
+            }
+          },
+          "then": {
+            "properties": {
+              "exemptibleRequests": false,
+              "oidc": false
+            }
+          }
+        }
+      ],
+      "properties": {
+        "exemptibleRequests": {
+          "description": "Requests to this endpoint the workload can safely take without a signed-in viewer: the offer a blueprint node may grant with accessExemptions on a RESTRICTED exposure. HTTP-routed endpoints (HTTP, HTTPS, WS) only.",
+          "$ref": "#/$defs/ComponentEndpointExemptibleRequests"
+        },
+        "oidc": {
+          "description": "Declares the endpoint an OpenID Connect client, which a blueprint node selects with viewerIdentity OIDC. HTTP-routed endpoints (HTTP, HTTPS, WS) only.",
+          "$ref": "#/$defs/ComponentEndpointOidc"
+        },
+        "protocol": {
+          "description": "Protocol the platform speaks to the workload on targetPort: HTTP, HTTPS, WS or GRPC (URL-addressed), or TCP or UDP (port-addressed).",
+          "enum": [
+            "HTTP",
+            "HTTPS",
+            "WS",
+            "GRPC",
+            "TCP",
+            "UDP"
+          ],
+          "type": "string"
+        },
+        "targetPort": {
+          "description": "Port the workload listens on, where traffic for this endpoint is forwarded. Never the public port, which the platform allocates. A port below 1024 is structurally valid; where the platform's runtime cannot bind one, admission rejects it with ERR_PRIVILEGED_PORT (COMP-EP-019).",
+          "maximum": 65535,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "tls": {
+          "description": "How the platform trusts the workload's certificate. Only on an HTTPS endpoint; omitted, the certificate is verified against publicly trusted roots.",
+          "$ref": "#/$defs/ComponentEndpointTls"
+        }
+      },
+      "required": [
+        "targetPort",
+        "protocol"
+      ],
+      "type": "object",
+      "x-additionalPropertiesName": "endpointName"
+    },
+    "ComponentEndpointExemptibleRequests": {
+      "description": "Requests the workload can take without a signed-in viewer: paths, bearerToken true, or both.",
+      "$comment": "spec.md §5.2 COMP-EP-015. paths, or bearerToken true, or both: bearerToken false alone offers nothing. bearerToken true states that every route of the endpoint checks the bearer token a request carries.",
+      "additionalProperties": false,
+      "if": {
+        "not": {
+          "properties": {
+            "paths": true
+          },
+          "required": [
+            "paths"
+          ]
+        }
+      },
+      "minProperties": 1,
+      "properties": {
+        "bearerToken": {
+          "description": "True when every route of the endpoint checks the bearer token a request carries, so that a request presenting one may be forwarded without a viewer for the workload to judge.",
+          "type": "boolean"
+        },
+        "paths": {
+          "description": "Routes that serve machines. A request is covered by blueprint BP-ACCESS-009's rule: once normalised, its path equals an exempt path or continues it with /, so /webhook covers /webhook and /webhook/abc, never /webhooks.",
+          "items": {
+            "$ref": "#/$defs/ComponentEndpointPath"
+          },
+          "maxItems": 32,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "then": {
+        "properties": {
+          "bearerToken": {
+            "const": true
+          }
+        },
+        "required": [
+          "bearerToken"
+        ]
+      },
+      "type": "object"
+    },
+    "ComponentEndpointOidc": {
+      "description": "The endpoint as an OpenID Connect client of the platform.",
+      "$comment": "spec.md §5.2 COMP-EP-013. The platform registers the endpoint publicURL followed by each path, compared exactly.",
+      "additionalProperties": false,
+      "properties": {
+        "redirectPaths": {
+          "description": "Paths the workload receives the authorization response on. The platform registers publicURL followed by each one as a redirect URI.",
+          "items": {
+            "$ref": "#/$defs/ComponentEndpointPath"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "redirectPaths"
+      ],
+      "type": "object"
+    },
+    "ComponentEndpointPath": {
+      "description": "A literal path on the endpoint: an exempt path covers requests by blueprint BP-ACCESS-009's rule, and a redirect path is compared exactly. Never /.musher or a path under it, which the platform serves its sign-in on.",
+      "$comment": "spec.md §5.2 COMP-EP-016. Lookahead-free, so it compiles under RE2 as well as ECMA-262. Segments of RFC 3986 unreserved characters, sub-delimiters other than ;, colon and at; each segment holds a character other than a dot, so none is . or ..; no empty segment, no trailing slash, and never / alone. The not excludes the platform sign-in prefix.",
+      "maxLength": 256,
+      "not": {
+        "pattern": "^/\\.musher(?:/|$)"
+      },
+      "pattern": "^(?:/[A-Za-z0-9._~!$&'()*+,=:@-]*[A-Za-z0-9_~!$&'()*+,=:@-][A-Za-z0-9._~!$&'()*+,=:@-]*)+$",
+      "type": "string"
+    },
+    "ComponentEndpointTls": {
+      "$comment": "spec.md §5.2 COMP-EP-005 / COMP-EP-007. One policy for every network connection the platform makes to the endpoint, forwarded traffic and probes alike. BUNDLE names its roots and the name to verify; the other modes carry no bundle. serverName is a DNS name, never an IP literal: its last label starts with a letter.",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "else": {
+            "properties": {
+              "trustBundle": false
+            }
+          },
+          "if": {
+            "properties": {
+              "verify": {
+                "const": "BUNDLE"
+              }
+            },
+            "required": [
+              "verify"
+            ]
+          },
+          "then": {
+            "properties": {
+              "serverName": true,
+              "trustBundle": true
+            },
+            "required": [
+              "trustBundle",
+              "serverName"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "serverName": {
+          "description": "Name sent in SNI and matched against the certificate. Never changes the address connected to or the HTTP Host header. Omitted, the certificate must be valid for the host the platform connects to. Required with BUNDLE.",
+          "maxLength": 253,
+          "pattern": "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)*[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$",
+          "type": "string"
+        },
+        "trustBundle": {
+          "description": "Own string input holding the PEM certificates that are the only trusted roots. Required with BUNDLE, and forbidden otherwise.",
+          "$ref": "#/$defs/ComponentInputReference"
+        },
+        "verify": {
+          "description": "How the certificate is verified: SYSTEM (publicly trusted roots), BUNDLE (the roots in trustBundle), or NONE (no chain or name verification; an explicit exception for this endpoint).",
+          "default": "SYSTEM",
+          "enum": [
+            "SYSTEM",
+            "BUNDLE",
+            "NONE"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ComponentGitRef": {
+      "$comment": "spec.md §5.1 COMP-SRC-001 and COMP-SRC-006. Exactly one of branch, tag and commit.",
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "branch": true
+          },
+          "required": [
+            "branch"
+          ]
+        },
+        {
+          "properties": {
+            "tag": true
+          },
+          "required": [
+            "tag"
+          ]
+        },
+        {
+          "properties": {
+            "commit": true
+          },
+          "required": [
+            "commit"
+          ]
+        }
+      ],
+      "properties": {
+        "branch": {
+          "description": "Branch to build from. A request, not a pin: the branch moves.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "commit": {
+          "description": "Full commit object ID to build from: 40 lowercase hexadecimal digits for SHA-1, 64 for SHA-256, never abbreviated. Identifies the repository content, not every build input.",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "type": "string"
+        },
+        "tag": {
+          "description": "Tag to build from. A request, not a pin, like a branch: a tag can be moved.",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ComponentGitSource": {
+      "$comment": "spec.md §5.1 COMP-SRC-001 and COMP-SRC-006. The build recipe is workload.build, not part of the source (ADR 0040 §1).",
+      "additionalProperties": false,
+      "properties": {
+        "ref": {
+          "description": "Branch, tag or commit to build from. Omitted, the repository default branch.",
+          "$ref": "#/$defs/ComponentGitRef"
+        },
+        "repositoryURL": {
+          "description": "Git repository the platform builds an image from: an absolute https URL without credentials, query or fragment.",
+          "$comment": "spec.md §5.1 COMP-SRC-006. Anchored and lookahead-free, so it compiles under RE2 as well as ECMA-262. The scheme is spelled in character classes because RFC 3986 §3.1 makes it case-insensitive. The host admits no @, so no userinfo, and the path admits no ? or #, so no query or fragment.",
+          "maxLength": 2048,
+          "pattern": "^[Hh][Tt][Tt][Pp][Ss]://(?:[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?|\\[[0-9A-Fa-f:.]+\\])(?::[0-9]{1,5})?(?:/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*)?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "repositoryURL"
+      ],
+      "type": "object"
+    },
+    "ComponentHealthProbes": {
+      "description": "Health probes: startup, readiness and liveness.",
+      "additionalProperties": false,
+      "properties": {
+        "liveness": {
+          "description": "Aliveness gate; failure restarts the workload. Optional.",
+          "$ref": "#/$defs/ComponentProbe"
+        },
+        "readiness": {
+          "description": "Traffic gate; failure pulls the replica from routing without a restart. Required when a blueprint exposes one of its URL-addressed endpoints PUBLIC (COMP-EP-003).",
+          "$ref": "#/$defs/ComponentProbe"
+        },
+        "startup": {
+          "description": "Initialization gate; failure means not-yet-started. Optional.",
+          "$ref": "#/$defs/ComponentProbe"
+        }
+      },
+      "type": "object"
+    },
+    "ComponentHttpProbe": {
+      "description": "An HTTP GET the platform sends over the endpoint’s protocol and trust policy; a 200 to 399 status succeeds unless expectedStatuses says otherwise. Redirects are never followed. The request carries no viewer identity, and carries Forwarded and X-Forwarded-For naming the probing host.",
+      "additionalProperties": false,
+      "properties": {
+        "auth": {
+          "description": "Credentials sent on the probe request only, never on forwarded traffic.",
+          "$ref": "#/$defs/ComponentProbeAuth"
+        },
+        "endpoint": {
+          "description": "Named endpoint serving HTTP or HTTPS.",
+          "pattern": "^[a-z][a-z0-9]{0,19}$",
+          "type": "string"
+        },
+        "expectedStatuses": {
+          "description": "HTTP statuses that count as success, replacing the 200 to 399 default for this probe.",
+          "$comment": "spec.md §5.4 COMP-EP-008. A final status is 200 to 599; a 1xx is never the answer to a probe.",
+          "items": {
+            "maximum": 599,
+            "minimum": 200,
+            "type": "integer"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "path": {
+          "description": "Absolute HTTP path the platform requests.",
+          "pattern": "^/",
+          "type": "string"
+        }
+      },
+      "required": [
+        "endpoint",
+        "path"
+      ],
+      "type": "object"
+    },
+    "ComponentImageReference": {
+      "description": "OCI image reference the workload runs from. A bare name means the tag latest, as in Docker. A tag is a request; only an @sha256 digest identifies content.",
+      "$comment": "Lookahead-free so it compiles under RE2 as well as ECMA-262. The tag colon is the one after the final slash, which is what keeps a registry port (localhost:5000/nginx) from reading as a tag. See spec.md §5.1 COMP-SRC-002.",
+      "maxLength": 512,
+      "pattern": "^(?:[A-Za-z0-9][A-Za-z0-9.-]*(?::[0-9]+)?/)?(?:[a-z0-9][a-z0-9._-]*/)*[a-z0-9][a-z0-9._-]*(?::[A-Za-z0-9_][A-Za-z0-9._-]{0,127})?(?:@sha256:[0-9a-f]{64})?$",
+      "type": "string"
+    },
+    "ComponentInput": {
+      "$comment": "spec.md §6.1 / ADR 0033 §2. The key that is present says what kind of input this is: `schema` for a value input, `connection` for a connection input. Exactly one.",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "$comment": "spec.md §6.4 COMP-CONNECTION-002. A connection input carries none of the value fields: its protocol fixes its members, and it is always required.",
+          "if": {
+            "required": [
+              "connection"
+            ]
+          },
+          "then": {
+            "properties": {
+              "default": false,
+              "presentationHint": false,
+              "required": false,
+              "schema": false,
+              "sensitive": false,
+              "target": false
+            }
+          }
+        }
+      ],
+      "oneOf": [
+        {
+          "properties": {
+            "schema": true
+          },
+          "required": [
+            "schema"
+          ]
+        },
+        {
+          "properties": {
+            "connection": true
+          },
+          "required": [
+            "connection"
+          ]
+        }
+      ],
+      "properties": {
+        "description": {
+          "description": "What this input means.",
+          "$comment": "spec.md §6 COMP-DESC-001 and COMP-DESC-004. A published component describes every input (COMP-DESC-004, admission), and the component is its only home: a blueprint parameter carries no description of its own and shows this one. Absent is a draft still being written; present and empty is never valid.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "connection": {
+          "description": "The connection this input stands for. Only an EXTERNAL component declares one.",
+          "$ref": "#/$defs/ComponentConnection"
+        },
+        "default": {
+          "description": "Logical value used when a blueprint binds nothing to the input."
+        },
+        "presentationHint": {
+          "description": "Optional presentation annotation, not a value constraint.",
+          "enum": [
+            "EMAIL",
+            "URI",
+            "ENDPOINT_URL",
+            "CONNECTION_STRING",
+            "HOSTNAME",
+            "TIMEZONE"
+          ],
+          "type": "string"
+        },
+        "required": {
+          "description": "Whether absence is forbidden; defaults to true.",
+          "default": true,
+          "type": "boolean"
+        },
+        "schema": {
+          "description": "Value schema of the input.",
+          "$ref": "#/$defs/ComponentValueSchema"
+        },
+        "sensitive": {
+          "description": "True when the value is sensitive: never supplied as an authored literal, masked in interfaces, never echoed back.",
+          "default": false,
+          "type": "boolean"
+        },
+        "target": {
+          "description": "Environment variable the value is written to. Optional on a workload input, which with no target is never in the environment and must be read by a build secret, probe credential, trust bundle or output; forbidden on an EXTERNAL input.",
+          "$ref": "#/$defs/ComponentInputTarget"
+        }
+      },
+      "type": "object",
+      "x-additionalPropertiesName": "inputName"
+    },
+    "ComponentInputReference": {
+      "$comment": "spec.md §5.1 COMP-BUILD-004, §5.2 COMP-EP-006. A value the workload configuration reads enters through one of the component’s own inputs.",
+      "additionalProperties": false,
+      "properties": {
+        "input": {
+          "description": "Own input supplying the value.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-zA-Z0-9]{0,63}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "input"
+      ],
+      "type": "object"
+    },
+    "ComponentInputTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "envVar": {
+          "description": "Environment variable the resolved value is written to (for example ADMIN_EMAIL). Uppercase letters, digits and underscores; never starting with a digit.",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Z_][A-Z0-9_]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "envVar"
+      ],
+      "type": "object"
+    },
+    "ComponentMetadata": {
+      "description": "Identity and description of a component document. The name is the file stem.",
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "description": "What this component is, in one or two plain-text sentences. Required to publish.",
+          "$comment": "spec.md §4 COMP-DESC-002. Plain text, never rendered as Markdown, and bounded like a listing summary. Structurally optional so a component can be stored while it is being written; COMP-DESC-003 requires it of a published one.",
+          "maxLength": 280,
+          "minLength": 1,
+          "type": "string"
+        },
+        "revision": {
+          "description": "Position of this document in the component’s lineage. Required and never defaulted; each publication carries a greater one.",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "type": "object"
+    },
+    "ComponentOutput": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "description": "What this output means.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "from": {
+          "$ref": "#/$defs/ComponentOutputFrom"
+        },
+        "presentationHint": {
+          "description": "Optional presentation annotation.",
+          "enum": [
+            "EMAIL",
+            "URI",
+            "ENDPOINT_URL",
+            "CONNECTION_STRING",
+            "HOSTNAME",
+            "TIMEZONE"
+          ],
+          "type": "string"
+        },
+        "schema": {
+          "description": "Value schema of the output.",
+          "$ref": "#/$defs/ComponentValueSchema"
+        },
+        "sensitive": {
+          "description": "True when the value is sensitive. Required of an output forwarding a sensitive connection member.",
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schema",
+        "from"
+      ],
+      "type": "object",
+      "x-additionalPropertiesName": "outputName"
+    },
+    "ComponentOutputFrom": {
+      "description": "Where the output value comes from.",
+      "$comment": "spec.md §6.2 / ADR 0031 §1 / ADR 0033 §2. The origin is the key that is present: a literal value, one of this component’s own inputs (with the member read, for a connection input), a property of one of its endpoints, or a template over its own endpoints. Exactly one; endpoint and property are one origin and each requires the other, and member requires input. member is the union of every protocol’s members; which ones an input has is semantic (COMP-OUT-004).",
+      "additionalProperties": false,
+      "dependentRequired": {
+        "endpoint": [
+          "property"
+        ],
+        "member": [
+          "input"
+        ],
+        "property": [
+          "endpoint"
+        ]
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "value": true
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "properties": {
+            "input": true
+          },
+          "required": [
+            "input"
+          ]
+        },
+        {
+          "properties": {
+            "endpoint": true,
+            "property": true
+          },
+          "required": [
+            "endpoint",
+            "property"
+          ]
+        },
+        {
+          "properties": {
+            "template": true
+          },
+          "required": [
+            "template"
+          ]
+        }
+      ],
+      "properties": {
+        "endpoint": {
+          "description": "Own endpoint whose property is read.",
+          "pattern": "^[a-z][a-z0-9]{0,19}$",
+          "type": "string"
+        },
+        "input": {
+          "description": "Own input forwarded as this output, keeping its sensitivity.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-zA-Z0-9]{0,63}$",
+          "type": "string"
+        },
+        "member": {
+          "description": "Member of a connection input to forward, one its protocol defines and every connection holds. Required when the input is a connection input, and forbidden otherwise.",
+          "enum": [
+            "baseURL",
+            "apiKey",
+            "model",
+            "host",
+            "port",
+            "database",
+            "username",
+            "password",
+            "sslMode",
+            "url",
+            "tls",
+            "endpointURL",
+            "region",
+            "bucket",
+            "accessKeyID",
+            "secretAccessKey",
+            "pathStyle",
+            "botToken",
+            "appToken",
+            "signingSecret",
+            "applicationID",
+            "publicKey"
+          ],
+          "type": "string"
+        },
+        "property": {
+          "description": "Property of the named endpoint: an allocated address, or a viewer identity property of an endpoint whose blueprint exposure selects the mode and claim that property belongs to. oidcClientSecret is sensitive.",
+          "enum": [
+            "publicURL",
+            "publicHostname",
+            "publicAddress",
+            "publicPort",
+            "privateHostname",
+            "privatePort",
+            "privateAddress",
+            "viewerIdentityHeader",
+            "trustedProxyCIDRs",
+            "viewerEmailHeader",
+            "viewerNameHeader",
+            "viewerAssertionHeader",
+            "viewerAssertionIssuer",
+            "viewerAssertionAudience",
+            "viewerAssertionKeysURL",
+            "oidcIssuerURL",
+            "oidcClientID",
+            "oidcClientSecret"
+          ],
+          "type": "string"
+        },
+        "template": {
+          "description": "String with ${{ self.endpoints.<endpoint>.<property> }} placeholders, substituted once.",
+          "maxLength": 65536,
+          "type": "string"
+        },
+        "value": {
+          "description": "Logical literal value; never for a sensitive output."
+        }
+      },
+      "type": "object"
+    },
+    "ComponentProbe": {
+      "$comment": "spec.md §5.4. The mechanism is the key that is present, as in a Kubernetes probe. HTTP is the only mechanism in v2; another is added as a sibling key.",
+      "additionalProperties": false,
+      "properties": {
+        "failureThreshold": {
+          "description": "Consecutive failures required to consider the probe failing.",
+          "default": 3,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "http": {
+          "$ref": "#/$defs/ComponentHttpProbe"
+        },
+        "initialDelaySeconds": {
+          "description": "Seconds to wait after start before the first probe.",
+          "default": 10,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "periodSeconds": {
+          "description": "Seconds between consecutive probe attempts.",
+          "default": 10,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "successThreshold": {
+          "description": "Consecutive successes required to consider the probe passing.",
+          "default": 1,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "timeoutSeconds": {
+          "description": "Seconds to wait for a probe response.",
+          "default": 5,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "http"
+      ],
+      "type": "object"
+    },
+    "ComponentProbeAuth": {
+      "description": "Credentials the probe request carries.",
+      "$comment": "spec.md §5.4 COMP-EP-009 / ADR 0031 §1. The mechanism is the key that is present. Exactly one.",
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "basic": true
+          },
+          "required": [
+            "basic"
+          ]
+        },
+        {
+          "properties": {
+            "bearer": true
+          },
+          "required": [
+            "bearer"
+          ]
+        }
+      ],
+      "properties": {
+        "basic": {
+          "description": "HTTP Basic credentials.",
+          "$ref": "#/$defs/ComponentBasicAuth"
+        },
+        "bearer": {
+          "description": "Bearer token credentials.",
+          "$ref": "#/$defs/ComponentBearerAuth"
+        }
+      },
+      "type": "object"
+    },
+    "ComponentProbeCredential": {
+      "description": "Where one credential comes from.",
+      "$comment": "spec.md §5.4 COMP-EP-010 / ADR 0031 §1. Where the credential comes from is the key that is present, as in an output's `from`. A password or token is a sensitive destination, so a `value` there is ERR_SENSITIVE_LITERAL, semantic.",
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "value": true
+          },
+          "required": [
+            "value"
+          ]
+        },
+        {
+          "properties": {
+            "input": true
+          },
+          "required": [
+            "input"
+          ]
+        }
+      ],
+      "properties": {
+        "input": {
+          "description": "Own input supplying the credential.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-zA-Z0-9]{0,63}$",
+          "type": "string"
+        },
+        "value": {
+          "description": "Literal non-secret value.",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "ComponentSchedule": {
+      "additionalProperties": false,
+      "properties": {
+        "cron": {
+          "description": "Five-field cron expression, evaluated in UTC, on which the JOB recurs.",
+          "$comment": "spec.md §5.7. Five fields (minute, hour, day of month, month, day of week) separated by one or more spaces or tabs, evaluated in UTC. The field count is structural so a seconds field or an @-macro is rejected rather than read two ways. The grammar and range of each field are a semantic rule of spec.md §5.7 (ERR_INVALID_SCHEDULE).",
+          "maxLength": 128,
+          "pattern": "^[^ \\t]+(?:[ \\t]+[^ \\t]+){4}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "cron"
+      ],
+      "type": "object"
+    },
+    "ComponentSource": {
+      "$comment": "spec.md §5.1 COMP-SRC-001 / ADR 0031 §1. The key that is present says where the content comes from. Exactly one: naming none is a missing field and naming two an invalid value.",
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "image": true
+          },
+          "required": [
+            "image"
+          ]
+        },
+        {
+          "properties": {
+            "git": true
+          },
+          "required": [
+            "git"
+          ]
+        },
+        {
+          "properties": {
+            "upload": true
+          },
+          "required": [
+            "upload"
+          ]
+        }
+      ],
+      "properties": {
+        "git": {
+          "description": "A commit of a Git repository, built with workload.build.",
+          "$ref": "#/$defs/ComponentGitSource"
+        },
+        "image": {
+          "$ref": "#/$defs/ComponentImageReference"
+        },
+        "upload": {
+          "description": "An uploaded archive named by its digest, built with workload.build.",
+          "$ref": "#/$defs/ComponentUploadSource"
+        }
+      },
+      "type": "object"
+    },
+    "ComponentSpec": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "$comment": "spec.md §5. type says what the platform runs and selects which fields apply. EXTERNAL runs nothing: it has no workload, its inputs have no environment target, and it is the only kind of component that declares a connection input. What a component needs before it can be published (a workload, a source, an endpoint, a command, an output) is an admission-phase obligation (spec.md §5), not a structural rule, so an unfinished component still validates. Written as if/then over properties declared once, so every default beneath stays within the effective-value resolution ADR 0008 requires.",
+          "else": {
+            "properties": {
+              "contract": {
+                "properties": {
+                  "inputs": {
+                    "additionalProperties": {
+                      "properties": {
+                        "connection": false,
+                        "target": {
+                          "$ref": "#/$defs/ComponentInputTarget"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "type": {
+                "const": "EXTERNAL"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "contract": {
+                "properties": {
+                  "inputs": {
+                    "additionalProperties": {
+                      "properties": {
+                        "target": false
+                      }
+                    }
+                  }
+                }
+              },
+              "workload": false
+            }
+          }
+        },
+        {
+          "$comment": "spec.md §5. A JOB runs to completion and serves nothing, so it declares no endpoint and no probe. Only a JOB may carry a schedule. Its command is a publication obligation (spec.md §5).",
+          "else": {
+            "properties": {
+              "workload": {
+                "properties": {
+                  "schedule": false
+                }
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "type": {
+                "const": "JOB"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "workload": {
+                "properties": {
+                  "endpoints": false,
+                  "health": false
+                }
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "contract": {
+          "description": "The component contract: the inputs the component consumes and the outputs it produces.",
+          "$ref": "#/$defs/ComponentContract"
+        },
+        "type": {
+          "description": "What the platform runs: SERVICE (a long-running, request-driven workload with at least one endpoint), WORKER (a long-running workload that is not request-driven; endpoints optional and never PUBLIC), JOB (a workload that runs to completion, once per rollout or on a schedule), or EXTERNAL (nothing: the node stands in the graph for a connection or an outside service).",
+          "enum": [
+            "SERVICE",
+            "WORKER",
+            "JOB",
+            "EXTERNAL"
+          ],
+          "type": "string"
+        },
+        "workload": {
+          "description": "How the platform runs the component: source, build recipe, command, endpoints, storage and probes. A published SERVICE, WORKER or JOB carries one; forbidden when type is EXTERNAL.",
+          "$ref": "#/$defs/ComponentWorkload"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ComponentUploadSource": {
+      "$comment": "spec.md §5.1 COMP-SRC-005 and COMP-SRC-007 / ADR 0040 §2. The archive is a POSIX tar, optionally gzip-compressed; its size limit and the upload API belong to the platform.",
+      "additionalProperties": false,
+      "properties": {
+        "digest": {
+          "description": "SHA-256 digest of the uploaded archive’s bytes, exactly as uploaded.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "digest"
+      ],
+      "type": "object"
+    },
+    "ComponentValueSchema": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "$comment": "The selected branch requires its applicable fields and forbids fields that have no meaning for that branch.",
+          "if": {
+            "properties": {
+              "type": {
+                "const": "array"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "items": true
+            },
+            "required": [
+              "items"
+            ]
+          }
+        },
+        {
+          "$comment": "The selected branch requires its applicable fields and forbids fields that have no meaning for that branch.",
+          "if": {
+            "properties": {
+              "type": {
+                "const": "object"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "additionalProperties": true,
+              "properties": true
+            },
+            "required": [
+              "properties",
+              "additionalProperties"
+            ]
+          }
+        },
+        {
+          "$comment": "The selected branch requires its applicable fields and forbids fields that have no meaning for that branch.",
+          "if": {
+            "properties": {
+              "type": {
+                "const": "string"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "additionalProperties": false,
+              "exclusiveMaximum": false,
+              "exclusiveMinimum": false,
+              "items": false,
+              "maxItems": false,
+              "maximum": false,
+              "minItems": false,
+              "minimum": false,
+              "properties": false,
+              "required": false,
+              "uniqueItems": false
+            }
+          }
+        },
+        {
+          "$comment": "The selected branch requires its applicable fields and forbids fields that have no meaning for that branch.",
+          "if": {
+            "properties": {
+              "type": {
+                "const": "number"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "additionalProperties": false,
+              "items": false,
+              "maxItems": false,
+              "maxLength": false,
+              "minItems": false,
+              "minLength": false,
+              "pattern": false,
+              "properties": false,
+              "required": false,
+              "uniqueItems": false
+            }
+          }
+        },
+        {
+          "$comment": "The selected branch requires its applicable fields and forbids fields that have no meaning for that branch.",
+          "if": {
+            "properties": {
+              "type": {
+                "const": "integer"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "additionalProperties": false,
+              "items": false,
+              "maxItems": false,
+              "maxLength": false,
+              "minItems": false,
+              "minLength": false,
+              "pattern": false,
+              "properties": false,
+              "required": false,
+              "uniqueItems": false
+            }
+          }
+        },
+        {
+          "$comment": "The selected branch requires its applicable fields and forbids fields that have no meaning for that branch.",
+          "if": {
+            "properties": {
+              "type": {
+                "const": "boolean"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "additionalProperties": false,
+              "exclusiveMaximum": false,
+              "exclusiveMinimum": false,
+              "items": false,
+              "maxItems": false,
+              "maxLength": false,
+              "maximum": false,
+              "minItems": false,
+              "minLength": false,
+              "minimum": false,
+              "pattern": false,
+              "properties": false,
+              "required": false,
+              "uniqueItems": false
+            }
+          }
+        },
+        {
+          "$comment": "The selected branch requires its applicable fields and forbids fields that have no meaning for that branch.",
+          "if": {
+            "properties": {
+              "type": {
+                "const": "null"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "additionalProperties": false,
+              "exclusiveMaximum": false,
+              "exclusiveMinimum": false,
+              "items": false,
+              "maxItems": false,
+              "maxLength": false,
+              "maximum": false,
+              "minItems": false,
+              "minLength": false,
+              "minimum": false,
+              "pattern": false,
+              "properties": false,
+              "required": false,
+              "uniqueItems": false
+            }
+          }
+        },
+        {
+          "$comment": "The selected branch requires its applicable fields and forbids fields that have no meaning for that branch.",
+          "if": {
+            "properties": {
+              "type": {
+                "const": "array"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "additionalProperties": false,
+              "exclusiveMaximum": false,
+              "exclusiveMinimum": false,
+              "maxLength": false,
+              "maximum": false,
+              "minLength": false,
+              "minimum": false,
+              "pattern": false,
+              "properties": false,
+              "required": false
+            }
+          }
+        },
+        {
+          "$comment": "The selected branch requires its applicable fields and forbids fields that have no meaning for that branch.",
+          "if": {
+            "properties": {
+              "type": {
+                "const": "object"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "exclusiveMaximum": false,
+              "exclusiveMinimum": false,
+              "items": false,
+              "maxItems": false,
+              "maxLength": false,
+              "maximum": false,
+              "minItems": false,
+              "minLength": false,
+              "minimum": false,
+              "pattern": false,
+              "uniqueItems": false
+            }
+          }
+        }
+      ],
+      "properties": {
+        "additionalProperties": {
+          "const": false,
+          "type": "boolean"
+        },
+        "enum": {
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "exclusiveMaximum": {
+          "type": "number"
+        },
+        "exclusiveMinimum": {
+          "type": "number"
+        },
+        "items": {
+          "$ref": "#/$defs/ComponentValueSchema"
+        },
+        "maxItems": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maxLength": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "maximum": {
+          "type": "number"
+        },
+        "minItems": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minLength": {
+          "minimum": 0,
+          "type": "integer"
+        },
+        "minimum": {
+          "type": "number"
+        },
+        "pattern": {
+          "maxLength": 256,
+          "type": "string"
+        },
+        "properties": {
+          "additionalProperties": {
+            "$ref": "#/$defs/ComponentValueSchema"
+          },
+          "type": "object",
+          "x-additionalPropertiesName": "propertyName"
+        },
+        "required": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "type": {
+          "enum": [
+            "string",
+            "integer",
+            "number",
+            "boolean",
+            "null",
+            "array",
+            "object"
+          ],
+          "type": "string"
+        },
+        "uniqueItems": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "type": "object"
+    },
+    "ComponentVolume": {
+      "additionalProperties": false,
+      "properties": {
+        "minSizeGiB": {
+          "description": "Smallest allocation the component can run with. The blueprint allocates at least this.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "mountPath": {
+          "description": "Absolute path where the volume is mounted in the workload.",
+          "maxLength": 512,
+          "pattern": "^/",
+          "type": "string"
+        },
+        "readOnly": {
+          "description": "True when the volume is mounted read-only.",
+          "default": false,
+          "type": "boolean"
+        },
+        "shared": {
+          "description": "True when every replica mounts the same volume at once. False, the volume is mounted into one replica at a time.",
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "mountPath",
+        "minSizeGiB"
+      ],
+      "type": "object",
+      "x-additionalPropertiesName": "volumeName"
+    },
+    "ComponentWorkload": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "$comment": "spec.md §5.1 COMP-BUILD-001. An image is already built, so a recipe beside it is an invalid value; a git or upload source has no image until one is built, so it requires a recipe. A workload with no source yet may carry a build.",
+          "if": {
+            "properties": {
+              "source": {
+                "properties": {
+                  "image": true
+                },
+                "required": [
+                  "image"
+                ]
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "properties": {
+              "build": false
+            }
+          }
+        },
+        {
+          "$comment": "spec.md §5.1 COMP-BUILD-001. A source holding git or upload has no image until one is built, so the workload requires a build recipe beside it.",
+          "if": {
+            "properties": {
+              "source": {
+                "anyOf": [
+                  {
+                    "properties": {
+                      "git": true
+                    },
+                    "required": [
+                      "git"
+                    ]
+                  },
+                  {
+                    "properties": {
+                      "upload": true
+                    },
+                    "required": [
+                      "upload"
+                    ]
+                  }
+                ]
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "properties": {
+              "build": true
+            },
+            "required": [
+              "build"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "build": {
+          "description": "The build recipe for a git or upload source. Required beside one, forbidden beside an image.",
+          "$ref": "#/$defs/ComponentBuild"
+        },
+        "command": {
+          "description": "Arguments the workload runs, as a list, with no shell. Replaces the image CMD and keeps its ENTRYPOINT. A published JOB carries one.",
+          "$comment": "spec.md §5. Exec form: each item is one argument and no shell parses them. It replaces the image CMD and keeps its ENTRYPOINT, which is what `command` means in Docker and Compose.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "endpoints": {
+          "description": "Named ports the workload listens on. A published SERVICE declares at least one; optional on a WORKER (never exposed PUBLIC), forbidden on a JOB.",
+          "additionalProperties": {
+            "$ref": "#/$defs/ComponentEndpoint"
+          },
+          "propertyNames": {
+            "$comment": "spec.md §5.2. An endpoint name is named by probes, outputs and blueprint exposure, and is composed into a DNS label beside other slugs rather than being one. Alphanumeric keeps any hyphen separator unambiguous; 20 characters leave room in the 63-character label for what it composes with.",
+            "pattern": "^[a-z][a-z0-9]{0,19}$"
+          },
+          "type": "object"
+        },
+        "health": {
+          "description": "Health probes (startup, readiness, liveness). Forbidden on a JOB.",
+          "$ref": "#/$defs/ComponentHealthProbes"
+        },
+        "schedule": {
+          "description": "Makes a JOB recur. Omitted, the job runs once per rollout. Forbidden on every other type.",
+          "$ref": "#/$defs/ComponentSchedule"
+        },
+        "source": {
+          "description": "Where the workload’s content comes from: an image, a Git commit or an uploaded archive. A published workload carries one.",
+          "$ref": "#/$defs/ComponentSource"
+        },
+        "volumes": {
+          "description": "Persistent storage the workload mounts, with the minimum size each needs. Names use the DNS-label grammar.",
+          "additionalProperties": {
+            "$ref": "#/$defs/ComponentVolume"
+          },
+          "propertyNames": {
+            "maxLength": 63,
+            "pattern": "^[a-z][a-z0-9-]{0,61}[a-z0-9]$"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    }
+  }
+}

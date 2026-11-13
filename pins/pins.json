@@ -1,0 +1,23 @@
+{
+  "specifications": {
+    "component": {
+      "version": "2.1.0",
+      "file": "schemas/component.schema.json",
+      "url": "https://specifications.musher.dev/component/v2.1.0/component.schema.json",
+      "sha256": "fda4f4c5eb251e37ef20e62061d99cc616de2c738f862f86f2e6bceffd4f338f"
+    },
+    "blueprint": {
+      "version": "2.1.0",
+      "file": "schemas/blueprint.schema.json",
+      "url": "https://specifications.musher.dev/blueprint/v2.1.0/blueprint.schema.json",
+      "sha256": "017169fbb20b8118f73b84ae729f16c326225c56974fbfb3153e2f9a643d3c92"
+    }
+  },
+  "openapi": {
+    "file": "openapi/public.json",
+    "source": "musher-dev/platform-api@43324464bf4f5f00fb71a59713998baaeb3112b9:platform-api/contracts/openapi/public.json",
+    "sourceSha256": "371a4cd54e8270fe9e867d4b9aac062f7e00e6b79b823d106bdf3ff76f16ee63",
+    "pinnedOn": "2026-11-13",
+    "sha256": "69daa6498e8466b001523953f9c0217e1136b016851ac2b0066c51157caf6b8c"
+  }
+}

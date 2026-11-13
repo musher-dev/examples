@@ -7,6 +7,7 @@ on:
   schedule:
     # Weekly. These examples exist to work, and the way they stop working is a
     # base image or a registry changing under them — which no PR would catch.
+    # Drift in the API and the specifications is upstream.yml's job.
     - cron: "17 6 * * 1"
 
 permissions:
@@ -15,6 +16,11 @@ permissions:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  # The checks' own tools, pinned like everything else here.
+  CHECK_JSONSCHEMA_VERSION: "0.38.1"
+  JSONSCHEMA_VERSION: "4.23.0"
 
 jobs:
   discover:
@@ -53,159 +59,60 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Container starts and answers its readiness probe
-        run: |
-          set -euo pipefail
-          example="${{ matrix.example }}"
-          # An example may declare several Components; only the ones whose
-          # image ref is the ${IMAGE_REF} placeholder are built from this
-          # Dockerfile. Probe the first of those that declares a readiness
-          # path — the rest wrap public images CI has no business starting.
-          spec=""
-          for f in "$example"/musher/component*.yaml; do
-            ref=$(yq -r '.spec.workload.source.ref // ""' "$f")
-            case "$ref" in '$'*) ;; *) continue ;; esac
-            if yq -e '.spec.workload.health.readiness.path' "$f" >/dev/null 2>&1; then
-              spec="$f"; break
-            fi
-          done
-          probe=""
-          [ -n "$spec" ] && probe=$(yq -r '.spec.workload.health.readiness.path' "$spec")
-          if [ -z "$probe" ]; then
-            echo "no readiness probe declared — start-only check"
-            docker run --rm -d --name "ci-$example" "musher-examples/$example:ci"
-            sleep 3
-            docker ps --filter "name=ci-$example" --format '{{.Names}}' | grep -q "ci-$example"
-            docker rm -f "ci-$example"
-            exit 0
-          fi
-          port=$(yq -r '.spec.workload.endpoints.primary.containerPort' "$spec")
-          bp="$example/musher/blueprint.yaml"
-          net="ci-$example-net"
-          docker network create "$net" >/dev/null
-
-          # Stand in for the platform's wiring. Every Component that wraps a
-          # public image starts as a sidecar named after its Blueprint node,
-          # and each CONNECTION input on the probed Component is resolved the
-          # way Musher resolves it: take the producer's output template and
-          # substitute the producer's address for {{ self.privateAddress.* }}.
-          declare -a env_args=()
-          for node in $(yq -r '.spec.components | keys | .[]' "$bp"); do
-            slug=$(yq -r ".spec.components.\"$node\".componentId" "$bp" \
-              | sed -n 's/^\${\(.*\)_COMPONENT_ID}$/\1/p' | tr '[:upper:]_' '[:lower:]-')
-            f=$(grep -l "slug: $slug\$" "$example"/musher/component*.yaml || true)
-            [ -n "$f" ] || continue
-            ref=$(yq -r '.spec.workload.source.ref // ""' "$f")
-            case "$ref" in '$'*) continue ;; esac
-            docker run --rm -d --network "$net" --name "$node" "$ref" >/dev/null
-            echo "sidecar $node ← $ref"
-          done
-          for input in $(yq -r '.spec.contract.inputs // {} | keys | .[]' "$spec"); do
-            [ "$(yq -r ".spec.contract.inputs.\"$input\".suppliedBy // \"USER\"" "$spec")" = CONNECTION ] || continue
-            probed_node=$(yq -r ".spec.components | to_entries | map(select(.value.connections | has(\"$input\"))) | .[0].key" "$bp")
-            from_role=$(yq -r ".spec.components.\"$probed_node\".connections.\"$input\".fromRole" "$bp")
-            from_output=$(yq -r ".spec.components.\"$probed_node\".connections.\"$input\".fromOutput" "$bp")
-            key=$(yq -r ".spec.contract.inputs.\"$input\".target.envVarKey" "$spec")
-            prod_slug=$(yq -r ".spec.components.\"$from_role\".componentId" "$bp" \
-              | sed -n 's/^\${\(.*\)_COMPONENT_ID}$/\1/p' | tr '[:upper:]_' '[:lower:]-')
-            prod=$(grep -l "slug: $prod_slug\$" "$example"/musher/component*.yaml)
-            tmpl=$(yq -r ".spec.contract.outputs.\"$from_output\".value" "$prod")
-            ep=$(sed -n 's/.*{{ self\.privateAddress\.\([a-z0-9-]*\) }}.*/\1/p' <<<"$tmpl")
-            prod_port=$(yq -r ".spec.workload.endpoints.\"$ep\".containerPort" "$prod")
-            value=$(sed "s|{{ self\.privateAddress\.$ep }}|$from_role:$prod_port|" <<<"$tmpl")
-            env_args+=(--env "$key=$value")
-            echo "wired $key=$value"
-          done
-
-          docker run --rm -d --network "$net" --name "ci-$example" \
-            "${env_args[@]}" -p "18080:$port" "musher-examples/$example:ci"
-          for _ in $(seq 1 30); do
-            curl -fsS "http://localhost:18080$probe" >/dev/null 2>&1 && break
-            sleep 1
-          done
-          curl -fsS "http://localhost:18080$probe"
-          docker rm -f "ci-$example"
-          docker network rm "$net" >/dev/null
+        env:
+          EXAMPLE: ${{ matrix.example }}
+        run: sh scripts/ci/smoke.sh "$EXAMPLE"
 
   specs:
     name: Validate specs
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Vendored contracts match their pins
+        # A hand-edited schema or OpenAPI copy, or a pin bumped without its
+        # file, fails here. scripts/pins/update.sh is the only way to change them.
+        run: sh scripts/pins/verify.sh
+      - name: Install check-jsonschema
+        run: pipx install "check-jsonschema==$CHECK_JSONSCHEMA_VERSION"
+      - name: Every document validates against the pinned specification
+        run: sh scripts/check/specs.sh
 
-      - name: Every spec parses and carries the envelope
+  api:
+    name: API calls match the pinned OpenAPI
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Every route the script and READMEs call exists
+        run: python3 scripts/check/api-routes.py
+      - name: The apply script's requests validate against the OpenAPI
+        # Runs scripts/musher-apply.sh against a local fake that refuses any
+        # request the pinned OpenAPI would. No credentials, no network.
         run: |
-          set -euo pipefail
-          status=0
-          for f in */musher/*.yaml; do
-            if ! yq -e '.specVersion == "v1"' "$f" >/dev/null 2>&1; then
-              echo "::error file=$f::missing or unsupported specVersion"; status=1; continue
-            fi
-            if ! yq -e '.kind == "COMPONENT" or .kind == "BLUEPRINT"' "$f" >/dev/null 2>&1; then
-              echo "::error file=$f::kind must be COMPONENT or BLUEPRINT"; status=1; continue
-            fi
-            yq -e 'has("metadata") and has("spec")' "$f" >/dev/null 2>&1 \
-              || { echo "::error file=$f::missing metadata or spec"; status=1; }
-            echo "ok  $f"
-          done
-          exit $status
-
-      - name: No floating image tags
-        # A floating tag builds fine and is rejected at publish. Catch it here,
-        # where the error names the file.
-        run: |
-          set -euo pipefail
-          status=0
-          for f in */musher/component*.yaml; do
-            ref=$(yq -r '.spec.workload.source.ref // ""' "$f")
-            case "$ref" in
-              # A ref starting with '$' is a placeholder the apply script
-              # substitutes at deploy time; there is no tag to judge yet.
-              '$'*|'') continue ;;
-              *:latest|*:main|*:master|*:stable|*:edge|*:nightly|*:dev|*:rolling)
-                echo "::error file=$f::floating tag '$ref' is rejected at publish"; status=1 ;;
-              *:*) ;;
-              *) echo "::error file=$f::image ref '$ref' has no tag"; status=1 ;;
-            esac
-          done
-          exit $status
-
-      - name: Every blueprint node resolves to a component file
-        run: |
-          set -euo pipefail
-          status=0
-          for bp in */musher/blueprint.yaml; do
-            dir=$(dirname "$bp")
-            slugs=$(yq -r '.metadata.slug' "$dir"/component*.yaml)
-            for node in $(yq -r '.spec.components | keys | .[]' "$bp"); do
-              ref=$(yq -r ".spec.components.\"$node\".componentId" "$bp")
-              # Placeholders are ${SLUG_COMPONENT_ID}; check the slug exists.
-              slug=$(echo "$ref" | sed -n 's/^\${\(.*\)_COMPONENT_ID}$/\1/p' \
-                | tr '[:upper:]_' '[:lower:]-')
-              if [ -n "$slug" ] && ! grep -qx "$slug" <<<"$slugs"; then
-                echo "::error file=$bp::node '$node' references unknown component '$slug'"
-                status=1
-              fi
-            done
-          done
-          exit $status
+          python3 -m pip install --quiet "jsonschema==$JSONSCHEMA_VERSION"
+          python3 scripts/check/contract-test.py
 
   shell:
     name: Shellcheck
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: shellcheck scripts/*.sh
+      # POSIX sh: the apply script runs on whatever /bin/sh a reader has.
+      - run: shellcheck --shell=sh scripts/*.sh scripts/*/*.sh
 
   required:
     name: CI / required
     if: always()
-    needs: [build, specs, shell]
+    needs: [build, specs, api, shell]
     runs-on: ubuntu-latest
     steps:
       - name: Fail if any job did not succeed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
         run: |
-          results='${{ join(needs.*.result, ' ') }}'
-          echo "job results: $results"
-          for r in $results; do
+          echo "job results: $RESULTS"
+          for r in $RESULTS; do
             [ "$r" = "success" ] || { echo "a required job reported '$r'"; exit 1; }
           done

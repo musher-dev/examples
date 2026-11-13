@@ -1,0 +1,999 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://specifications.musher.dev/blueprint/v2.1.0/blueprint.schema.json",
+  "title": "Musher Blueprint Document",
+  "description": "A blueprint: a graph of nodes, each deploying one component, with the compute, storage, exposure and bindings that node gives it, and the deployment parameters the graph takes from outside the documents.",
+  "$comment": "Structural and type validation only: document references, slug and directory agreement, admission and resolution are later validation phases. See spec.md §6.",
+  "additionalProperties": false,
+  "properties": {
+    "kind": {
+      "description": "Document kind discriminator. Must be BLUEPRINT.",
+      "const": "BLUEPRINT",
+      "type": "string"
+    },
+    "metadata": {
+      "$ref": "#/$defs/BlueprintMetadata"
+    },
+    "spec": {
+      "$ref": "#/$defs/BlueprintSpec"
+    },
+    "specVersion": {
+      "description": "Major version of the Musher document format.",
+      "enum": [
+        "v2"
+      ],
+      "type": "string"
+    }
+  },
+  "required": [
+    "specVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "type": "object",
+  "$defs": {
+    "BlueprintBinding": {
+      "description": "A binding: the origin of one input of the node, named by the key present.",
+      "$comment": "spec.md §4.2 BP-BIND-003 / ADR 0031 §1. The key that is present names the binding's origin: a deployment parameter, another node's output, or a literal value. Exactly one; `node` goes with `output`. Values from outside the documents enter only through parameters.",
+      "additionalProperties": false,
+      "dependentRequired": {
+        "node": [
+          "output"
+        ],
+        "output": [
+          "node"
+        ]
+      },
+      "oneOf": [
+        {
+          "properties": {
+            "parameter": true
+          },
+          "required": [
+            "parameter"
+          ]
+        },
+        {
+          "properties": {
+            "node": true,
+            "output": true
+          },
+          "required": [
+            "node",
+            "output"
+          ]
+        },
+        {
+          "properties": {
+            "value": true
+          },
+          "required": [
+            "value"
+          ]
+        }
+      ],
+      "properties": {
+        "node": {
+          "description": "Node whose output supplies the value.",
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9-]{0,61}[a-z0-9]$",
+          "type": "string"
+        },
+        "output": {
+          "description": "Output of that node.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-zA-Z0-9]{0,63}$",
+          "type": "string"
+        },
+        "parameter": {
+          "description": "Deployment parameter that is the origin of the value.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-zA-Z0-9]{0,63}$",
+          "type": "string"
+        },
+        "value": {
+          "description": "Logical literal value. Never for a sensitive input."
+        }
+      },
+      "type": "object",
+      "x-additionalPropertiesName": "inputName"
+    },
+    "BlueprintCompute": {
+      "description": "The compute a node runs on: a compute profile, and optional placement constraints that narrow where it is placed. Required on a node whose component runs, forbidden on one whose component is EXTERNAL. See spec.md §4.3.",
+      "additionalProperties": false,
+      "properties": {
+        "placement": {
+          "description": "Optional placement constraints narrowing the eligible hosts. Absent and a block with no constraint set mean the same thing.",
+          "$ref": "#/$defs/BlueprintPlacement"
+        },
+        "profile": {
+          "description": "Compute profile slug in the form <compute family>.<tier>.<size>, for example general.standard.small. The profiles actually on offer are published at https://api.musher.dev/v1/reference/compute-profiles.",
+          "$comment": "Lookahead-free, so it compiles under RE2 as well as ECMA-262. Only the grammar is here; catalog membership is an admission check (spec.md §4.3).",
+          "maxLength": 64,
+          "pattern": "^(general|compute|memory|storage|gpu|accelerator)\\.(economy|standard|performance|premium)\\.(nano|small|medium|large|xlarge)$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "profile"
+      ],
+      "type": "object"
+    },
+    "BlueprintExposure": {
+      "description": "Exposure of one endpoint in the object form: its visibility, whether the platform authenticates viewers, how the workload learns who they are, which of their claims it receives, and which requests pass without a viewer. Bare PUBLIC or PRIVATE is the object form with only visibility.",
+      "$comment": "spec.md §4.5 / ADR 0034 §1-§2 / ADR 0035 §2, §4. A bare PUBLIC or PRIVATE, or the object form. Bare PUBLIC is { visibility: PUBLIC } with every default: access OPEN, viewerIdentity NONE. Every member but visibility applies only to PUBLIC; an identity mode and accessExemptions require RESTRICTED; viewerClaims requires an identity mode (BP-NODE-006).",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "visibility": {
+                "const": "PRIVATE"
+              }
+            },
+            "required": [
+              "visibility"
+            ]
+          },
+          "then": {
+            "properties": {
+              "access": false,
+              "accessExemptions": false,
+              "viewerClaims": false,
+              "viewerIdentity": false
+            }
+          }
+        },
+        {
+          "else": {
+            "properties": {
+              "accessExemptions": false,
+              "viewerIdentity": {
+                "const": "NONE"
+              }
+            }
+          },
+          "if": {
+            "properties": {
+              "access": {
+                "const": "RESTRICTED"
+              }
+            },
+            "required": [
+              "access"
+            ]
+          }
+        },
+        {
+          "$comment": "spec.md §4.5 BP-NODE-006. A released claim travels in an identity mode, so viewerClaims requires a viewerIdentity other than NONE.",
+          "if": {
+            "not": {
+              "properties": {
+                "viewerIdentity": {
+                  "enum": [
+                    "HEADER",
+                    "ASSERTION",
+                    "OIDC"
+                  ]
+                }
+              },
+              "required": [
+                "viewerIdentity"
+              ]
+            }
+          },
+          "then": {
+            "properties": {
+              "viewerClaims": false
+            }
+          }
+        }
+      ],
+      "properties": {
+        "access": {
+          "description": "Whether the platform signs a viewer in before forwarding: OPEN forwards every request, and RESTRICTED admits only viewers who sign in and whom the deployment's access policy admits. PUBLIC only; RESTRICTED requires an HTTP-routed endpoint (HTTP, HTTPS or WS).",
+          "default": "OPEN",
+          "enum": [
+            "OPEN",
+            "RESTRICTED"
+          ],
+          "type": "string"
+        },
+        "accessExemptions": {
+          "description": "Requests a RESTRICTED endpoint forwards without a viewer, each one the component offers in its exemptibleRequests: PATHS, a request under one of its paths, and BEARER, a request with no viewer session that carries a bearer token (bearerToken: true).",
+          "items": {
+            "enum": [
+              "PATHS",
+              "BEARER"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "viewerClaims": {
+          "description": "Facts about the viewer released to the workload beside the subject: EMAIL, the viewer's verified email address, and NAME, their display name. Requires a viewerIdentity other than NONE.",
+          "items": {
+            "enum": [
+              "EMAIL",
+              "NAME"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        },
+        "viewerIdentity": {
+          "description": "How the workload learns who the viewer is: NONE; HEADER, a plain request header; ASSERTION, a signed JWT in a request header; or OIDC, the workload signs viewers in as an OpenID Connect client of the platform. Every value but NONE requires access RESTRICTED.",
+          "default": "NONE",
+          "enum": [
+            "NONE",
+            "HEADER",
+            "ASSERTION",
+            "OIDC"
+          ],
+          "type": "string"
+        },
+        "visibility": {
+          "description": "Whether the endpoint can be reached from outside the deployment.",
+          "enum": [
+            "PUBLIC",
+            "PRIVATE"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "visibility"
+      ],
+      "type": "object"
+    },
+    "BlueprintMetadata": {
+      "description": "Identity and description of a blueprint document. The blueprint carries the item’s revision; its sibling listing carries none. See spec.md §3.",
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "description": "What this blueprint deploys, in one or two plain-text sentences. Required to publish.",
+          "$comment": "spec.md §3 BP-ID-004. Plain text, never rendered as Markdown, bounded like a listing summary. It describes the blueprint to the people who deploy and operate it; the sibling listing’s summary remains the catalog copy. Structurally optional so a blueprint can be stored while it is being written; BP-ID-005 requires it of a published one.",
+          "maxLength": 280,
+          "minLength": 1,
+          "type": "string"
+        },
+        "revision": {
+          "description": "Item revision: the position of this publication in the catalog item's lineage. Orders publications and nothing more.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "slug": {
+          "description": "Item slug, which must equal the item's directory name.",
+          "maxLength": 63,
+          "pattern": "^[a-z][a-z0-9-]{0,61}[a-z0-9]$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "slug",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "BlueprintNode": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "$comment": "spec.md §4.1. The form of `componentRef` decides whether a revision is required: an item-local reference, beginning ./ or ../, names a document whose own metadata.revision is the revision deployed, so a second one here could contradict it.",
+          "else": {
+            "required": [
+              "revision"
+            ]
+          },
+          "if": {
+            "properties": {
+              "componentRef": {
+                "pattern": "^\\.{1,2}/"
+              }
+            },
+            "required": [
+              "componentRef"
+            ]
+          },
+          "then": {
+            "properties": {
+              "revision": false
+            }
+          }
+        }
+      ],
+      "properties": {
+        "bindings": {
+          "description": "The binding of each input, keyed by the component’s input name: where its value comes from.",
+          "additionalProperties": {
+            "$ref": "#/$defs/BlueprintBinding"
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "pattern": "^[a-z][a-zA-Z0-9]{0,63}$"
+          },
+          "type": "object"
+        },
+        "componentRef": {
+          "description": "Document reference to the component this node deploys, in one of two forms. An item-local reference begins ./ or ../ and ends .yaml or .yml, and resolves relative to the directory holding this blueprint document; its revision is the referenced document's metadata.revision. A catalog reference is the component's UUID, in lowercase hexadecimal, which names the component across all its revisions, and requires revision to select the one deployed. The relative-path prefix is what tells the two apart: a bare slug is not distinguishable from a UUID.",
+          "$comment": "Both patterns are lookahead-free so they compile under RE2 as well as ECMA-262. A path segment must begin with a letter or digit, which is how `.` and `..` are excluded as interior segments without a negative lookahead; that leaves one spelling per target and keeps the containment check in the semantic phase from having to normalise first.",
+          "anyOf": [
+            {
+              "pattern": "^(?:\\./|(?:\\.\\./)+)(?:[A-Za-z0-9][A-Za-z0-9._-]*/)*[A-Za-z0-9][A-Za-z0-9._-]*\\.ya?ml$"
+            },
+            {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+            }
+          ],
+          "maxLength": 256,
+          "type": "string"
+        },
+        "compute": {
+          "description": "Compute profile and placement for a node whose component runs. Omitted, and forbidden, where the component is EXTERNAL; that agreement is a semantic check against the component (spec.md §4.3).",
+          "$ref": "#/$defs/BlueprintCompute"
+        },
+        "exposure": {
+          "description": "Exposure of each of the component’s endpoints, keyed by endpoint name; an endpoint left out is PRIVATE. A WORKER endpoint is never PUBLIC.",
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "enum": [
+                  "PUBLIC",
+                  "PRIVATE"
+                ],
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/BlueprintExposure"
+              }
+            ]
+          },
+          "propertyNames": {
+            "pattern": "^[a-z][a-z0-9]{0,19}$"
+          },
+          "type": "object",
+          "x-additionalPropertiesName": "endpointName"
+        },
+        "revision": {
+          "description": "Revision a catalog reference pins. Required on a catalog reference and rejected on an item-local one, where the referenced document's own metadata.revision supplies it.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "volumes": {
+          "description": "Storage allocated to each of the component’s volumes, keyed by the component’s volume name.",
+          "additionalProperties": {
+            "$ref": "#/$defs/BlueprintVolumeAllocation"
+          },
+          "propertyNames": {
+            "maxLength": 63,
+            "pattern": "^[a-z][a-z0-9-]{0,61}[a-z0-9]$"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "componentRef"
+      ],
+      "type": "object",
+      "x-additionalPropertiesName": "nodeName"
+    },
+    "BlueprintParameter": {
+      "description": "Deployment parameter: a named value the deployment takes from outside the documents, bound explicitly by the nodes that consume it.",
+      "$comment": "spec.md §5 BP-PARAM-010 / ADR 0031 §4 / ADR 0035 §5, §6. A parameter has one origin: submitted (with an optional default), generated, hashed from a generated parameter, or read from outside the documents through `from` (a variable, a deployment fact or a connection). At most one of default, generator, from and hash, and a hash is never offered in a form.",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "generator": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "generator"
+            ]
+          },
+          "then": {
+            "properties": {
+              "default": false,
+              "from": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "from": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "from"
+            ]
+          },
+          "then": {
+            "properties": {
+              "default": false
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "hash": {
+                "type": "object"
+              }
+            },
+            "required": [
+              "hash"
+            ]
+          },
+          "then": {
+            "properties": {
+              "default": false,
+              "from": false,
+              "generator": false,
+              "ui": false
+            }
+          }
+        }
+      ],
+      "properties": {
+        "default": {
+          "description": "Logical default, replaced by a submitted value. No interpolation."
+        },
+        "from": {
+          "description": "One whole placeholder naming a value outside the documents: ${{ variables.<path> }} for an organization variable, ${{ connections.<path> }} for a connection, or ${{ deployment.creator.<fact> }} for a fact about the person who created the deployment. Never submitted; a connection is replaced whole through acquisition instead.",
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        },
+        "generator": {
+          "description": "Persisted credential generation; a submitted value is rejected.",
+          "$ref": "#/$defs/BlueprintParameterGenerator"
+        },
+        "hash": {
+          "description": "A hash of a generated parameter, computed once and kept beside it; a submitted value is rejected.",
+          "$ref": "#/$defs/BlueprintParameterHash"
+        },
+        "ui": {
+          "description": "Optional deploy-form presentation.",
+          "$ref": "#/$defs/BlueprintParameterUi"
+        }
+      },
+      "type": "object",
+      "x-additionalPropertiesName": "parameterName"
+    },
+    "BlueprintParameterGenerator": {
+      "additionalProperties": false,
+      "properties": {
+        "byteLength": {
+          "description": "Number of random bytes generated for the value.",
+          "default": 32,
+          "maximum": 64,
+          "minimum": 16,
+          "type": "integer"
+        },
+        "encoding": {
+          "description": "Encoding applied to securely generated random bytes.",
+          "default": "HEX",
+          "enum": [
+            "HEX",
+            "BASE64",
+            "BASE64URL"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "BlueprintParameterHash": {
+      "description": "Password hash of a generated parameter.",
+      "$comment": "spec.md §5.2 BP-PARAM-012 / ADR 0035 §6. The algorithms and their parameters are fixed: BCRYPT is $2b$ with cost 12, and ARGON2ID is m=19456, t=2, p=1 with a 16-byte salt and a 32-byte hash.",
+      "additionalProperties": false,
+      "properties": {
+        "algorithm": {
+          "description": "BCRYPT ($2b$, cost 12) or ARGON2ID (PHC string, m=19456, t=2, p=1).",
+          "enum": [
+            "BCRYPT",
+            "ARGON2ID"
+          ],
+          "type": "string"
+        },
+        "parameter": {
+          "description": "The generated parameter hashed.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-zA-Z0-9]{0,63}$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "parameter",
+        "algorithm"
+      ],
+      "type": "object"
+    },
+    "BlueprintParameterUi": {
+      "description": "Presentation metadata for a deploy-form parameter.",
+      "$comment": "spec.md §5.4. The control is derived from the value schema of the inputs the parameter is bound to rather than declared, so this carries only what a derivation cannot supply.",
+      "additionalProperties": false,
+      "properties": {
+        "enumLabels": {
+          "description": "Human-readable label for each enum member, keyed by the member it names. A member left unlabelled is offered as it is spelled.",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object",
+          "x-additionalPropertiesName": "enumMember"
+        },
+        "examples": {
+          "description": "Example values illustrating the form a value takes. Never submitted; parameter.default supplies an omitted submission.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "label": {
+          "description": "Human-readable label shown on the deploy form. Never empty.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "order": {
+          "description": "Relative position of the field within the form. Lower sorts first; a parameter declaring no order sorts after every parameter that declares one.",
+          "type": "integer"
+        },
+        "prominence": {
+          "description": "Standing of the field in the form: PRIMARY is offered directly, SECONDARY behind a disclosure the deployer opens.",
+          "default": "PRIMARY",
+          "enum": [
+            "PRIMARY",
+            "SECONDARY"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "type": "object"
+    },
+    "BlueprintPlacement": {
+      "description": "Optional placement constraints that narrow the hosts eligible for the node’s compute profile. A constraint never changes the compute the profile names. See spec.md §4.4.",
+      "$comment": "Every constraint that is not numeric takes lowercase catalog values rather than a member of a closed set: the grammar is fixed by this specification, and the vocabularies are versioned catalog context (spec.md §4.4). cpuDedication is the exception: two values are the whole concept.",
+      "additionalProperties": false,
+      "properties": {
+        "acceleratorInterconnect": {
+          "description": "Required accelerator interconnect, such as nvlink or pcie. Omit for no constraint. The permitted values are catalog values, not defined by this specification; see spec.md §4.4.",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "type": "string"
+        },
+        "acceleratorRuntimes": {
+          "description": "Required accelerator runtimes, such as cuda. An empty array constrains nothing, and a value may not repeat. The permitted values are catalog values, not defined by this specification; see spec.md §4.4.",
+          "items": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "acceleratorSKUClass": {
+          "description": "Exact accelerator SKU class required. Omit for no constraint. The permitted values are catalog values, not defined by this specification; see spec.md §4.4.",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "type": "string"
+        },
+        "cpuArchitectures": {
+          "description": "Permitted CPU architectures, such as x86_64 or arm64. An empty array constrains nothing, and a value may not repeat. The permitted values are catalog values, not defined by this specification; see spec.md §4.4.",
+          "items": {
+            "maxLength": 64,
+            "pattern": "^[a-z0-9][a-z0-9_-]*$",
+            "type": "string"
+          },
+          "type": "array",
+          "uniqueItems": true
+        },
+        "cpuDedication": {
+          "description": "Whether the node's vCPU must be dedicated rather than shared. Omit for no constraint. This is the one constraint whose vocabulary this specification closes; see spec.md §4.4.",
+          "enum": [
+            "shared",
+            "dedicated"
+          ],
+          "type": "string"
+        },
+        "minAcceleratorMemoryGiB": {
+          "description": "Minimum accelerator VRAM in GiB. Omit for no floor.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "networkClass": {
+          "description": "Required network class. Omit for no constraint. The permitted values are catalog values, not defined by this specification; see spec.md §4.4.",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "BlueprintResolutionRecord": {
+      "description": "The generated resolution record of one deployment: what each node deploys and runs, the specification releases, and the identities of every value read from outside the documents. Generated, never authored. See spec.md §5.2.",
+      "additionalProperties": false,
+      "properties": {
+        "blueprintDigest": {
+          "description": "sha256: and the SHA-256 of the blueprint document's bytes.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "credentials": {
+          "additionalProperties": {
+            "$ref": "#/$defs/BlueprintResolvedCredential"
+          },
+          "type": "object",
+          "x-additionalPropertiesName": "parameterName"
+        },
+        "deploymentSnapshot": {
+          "description": "Opaque identity and immutable version of the private deployment snapshot; never a secret-derived hash.",
+          "$ref": "#/$defs/BlueprintVersionedIdentity"
+        },
+        "nodes": {
+          "description": "What each node of the blueprint deploys and runs, keyed by node name.",
+          "additionalProperties": {
+            "$ref": "#/$defs/BlueprintResolvedNode"
+          },
+          "minProperties": 1,
+          "type": "object",
+          "x-additionalPropertiesName": "nodeName"
+        },
+        "specifications": {
+          "$ref": "#/$defs/BlueprintResolvedSpecifications"
+        },
+        "variables": {
+          "description": "Identity and version of each organization variable the deployment read.",
+          "additionalProperties": {
+            "$ref": "#/$defs/BlueprintVersionedIdentity"
+          },
+          "type": "object",
+          "x-additionalPropertiesName": "variablePath"
+        },
+        "version": {
+          "const": 1
+        }
+      },
+      "required": [
+        "version",
+        "blueprintDigest",
+        "specifications",
+        "nodes",
+        "variables",
+        "credentials",
+        "deploymentSnapshot"
+      ],
+      "type": "object"
+    },
+    "BlueprintResolvedCredential": {
+      "additionalProperties": false,
+      "properties": {
+        "identity": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "rotation": {
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "identity",
+        "rotation"
+      ],
+      "type": "object"
+    },
+    "BlueprintResolvedNode": {
+      "description": "One node of a resolution record: the component it deploys, the kind of workload source it runs, what the sources and build stages pinned, and its compute, volumes and exposure.",
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "$comment": "spec.md §5.2. An external node runs nothing: no image, source pins or compute, and no storage or exposure.",
+          "else": {
+            "required": [
+              "imageDigest",
+              "compute"
+            ]
+          },
+          "if": {
+            "properties": {
+              "source": {
+                "const": "EXTERNAL"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "properties": {
+              "builderDigest": false,
+              "compute": false,
+              "exposure": {
+                "maxProperties": 0
+              },
+              "gitCommit": false,
+              "imageDigest": false,
+              "recipeDigest": false,
+              "uploadDigest": false,
+              "volumes": {
+                "maxProperties": 0
+              }
+            }
+          }
+        },
+        {
+          "$comment": "spec.md §5.2. A Git node pins the commit its ref resolved to.",
+          "else": {
+            "properties": {
+              "gitCommit": false
+            }
+          },
+          "if": {
+            "properties": {
+              "source": {
+                "const": "GIT"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "required": [
+              "gitCommit"
+            ]
+          }
+        },
+        {
+          "$comment": "spec.md §5.2. An upload node pins the archive's digest.",
+          "else": {
+            "properties": {
+              "uploadDigest": false
+            }
+          },
+          "if": {
+            "properties": {
+              "source": {
+                "const": "UPLOAD"
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "required": [
+              "uploadDigest"
+            ]
+          }
+        },
+        {
+          "$comment": "spec.md §5.2. A built node, from a Git or upload source, pins the digest of its build recipe, and of its builder for a buildpacks recipe; only a built node carries either.",
+          "else": {
+            "properties": {
+              "builderDigest": false,
+              "recipeDigest": false
+            }
+          },
+          "if": {
+            "properties": {
+              "source": {
+                "enum": [
+                  "GIT",
+                  "UPLOAD"
+                ]
+              }
+            },
+            "required": [
+              "source"
+            ]
+          },
+          "then": {
+            "required": [
+              "recipeDigest"
+            ]
+          }
+        }
+      ],
+      "properties": {
+        "builderDigest": {
+          "description": "Digest the sources stage resolved a buildpacks recipe's builderImage to. Present exactly when the recipe is a buildpacks recipe.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "compute": {
+          "$ref": "#/$defs/BlueprintVersionedIdentity"
+        },
+        "digest": {
+          "description": "sha256: and the SHA-256 of the component document's bytes.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "exposure": {
+          "additionalProperties": {
+            "oneOf": [
+              {
+                "enum": [
+                  "PUBLIC",
+                  "PRIVATE"
+                ],
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/BlueprintExposure"
+              }
+            ]
+          },
+          "type": "object",
+          "x-additionalPropertiesName": "endpointName"
+        },
+        "gitCommit": {
+          "description": "Full commit object ID a Git source's ref resolved to.",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$",
+          "type": "string"
+        },
+        "identity": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "imageDigest": {
+          "description": "Digest of the image the node runs: the image source resolved, or the image built from a Git or upload source.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "recipeDigest": {
+          "description": "sha256: and the SHA-256 of the RFC 8785 canonical JSON of the build recipe, with context made explicit, each secret as its ID and input name only, and every empty object or array removed.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "revision": {
+          "minimum": 1,
+          "type": "integer"
+        },
+        "source": {
+          "description": "The kind of workload source the node runs: IMAGE, GIT or UPLOAD, or EXTERNAL for a node that runs nothing.",
+          "enum": [
+            "EXTERNAL",
+            "IMAGE",
+            "GIT",
+            "UPLOAD"
+          ]
+        },
+        "uploadDigest": {
+          "description": "Digest of the uploaded archive: the component's upload.digest.",
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        },
+        "volumes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/BlueprintVolumeAllocation"
+          },
+          "type": "object",
+          "x-additionalPropertiesName": "volumeName"
+        }
+      },
+      "required": [
+        "identity",
+        "revision",
+        "digest",
+        "source",
+        "volumes",
+        "exposure"
+      ],
+      "type": "object"
+    },
+    "BlueprintResolvedSpecifications": {
+      "additionalProperties": false,
+      "properties": {
+        "blueprint": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "type": "string"
+        },
+        "component": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "type": "string"
+        },
+        "core": {
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "core",
+        "component",
+        "blueprint"
+      ],
+      "type": "object"
+    },
+    "BlueprintSpec": {
+      "description": "The node graph and the deployment parameters.",
+      "additionalProperties": false,
+      "properties": {
+        "nodes": {
+          "description": "The node graph: each named node deploys one component. At least one is required to publish.",
+          "$comment": "spec.md §4 BP-GRAPH-001. Structurally it may be empty so a blueprint can be stored before its first node is chosen, or after its last one is removed; BP-GRAPH-001 requires at least one node of a published blueprint.",
+          "additionalProperties": {
+            "$ref": "#/$defs/BlueprintNode"
+          },
+          "propertyNames": {
+            "maxLength": 63,
+            "pattern": "^[a-z][a-z0-9-]{0,61}[a-z0-9]$"
+          },
+          "type": "object"
+        },
+        "parameters": {
+          "description": "Every value the deployment takes from outside the documents: submitted, generated and hash parameters, organization variables, deployment facts and connections. Nothing binds by name.",
+          "additionalProperties": {
+            "$ref": "#/$defs/BlueprintParameter"
+          },
+          "propertyNames": {
+            "maxLength": 64,
+            "pattern": "^[a-z][a-zA-Z0-9]{0,63}$"
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "nodes"
+      ],
+      "type": "object"
+    },
+    "BlueprintVersionedIdentity": {
+      "description": "An opaque identity and an immutable version.",
+      "additionalProperties": false,
+      "properties": {
+        "identity": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "version": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "identity",
+        "version"
+      ],
+      "type": "object"
+    },
+    "BlueprintVolumeAllocation": {
+      "additionalProperties": false,
+      "properties": {
+        "minIOPS": {
+          "description": "Minimum provisioned IOPS for this volume. Omit for no floor.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "sizeGiB": {
+          "description": "Allocated size, at or above the component’s minSizeGiB.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "storageClass": {
+          "description": "Required storage class for this volume, such as local-nvme. Omit for no constraint. The permitted values are catalog values, not defined by this specification; see spec.md §4.3.",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sizeGiB"
+      ],
+      "type": "object",
+      "x-additionalPropertiesName": "volumeName"
+    }
+  }
+}

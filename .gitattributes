@@ -1,0 +1,4 @@
+# Vendored contracts: reviewed by their checksum in pins/pins.json, not by eye.
+# GitHub collapses their diffs; `git diff` still shows them.
+pins/schemas/*.json linguist-generated=true
+pins/openapi/*.json linguist-generated=true
