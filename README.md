@@ -34,7 +34,8 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) if you want to add one.
 - Docker (or any OCI builder) and somewhere to push images. The examples use
   [GitHub Container Registry](https://ghcr.io); Docker Hub or a private registry
   work identically.
-- `curl`, `jq`, `yq`, and `envsubst` if you use the apply script.
+- `curl`, `jq`, and [`yq`](https://github.com/mikefarah/yq) (mikefarah's, v4)
+  if you use the apply script.
 
 ```bash
 export MUSHER_API_KEY="mush_..."
@@ -54,8 +55,10 @@ export MUSHER_ORG_ID="..."
 ```
 
 A **Component** is the reusable, versioned definition of one workload — its
-image, its ports, its health checks, its configuration. A **Blueprint** composes
-one or more Components into the thing you actually deploy. A **Deployment** is a
+image, its ports, its health checks, the inputs it needs. A **Blueprint**
+composes one or more Components into the thing you actually deploy, and decides
+what the Components leave open: compute, exposure, and where each input's value
+comes from. A **Deployment** is a
 running Blueprint. A single-service app is just a one-Component Blueprint, so
 nothing you learn here gets thrown away when the app grows.
 
@@ -72,11 +75,16 @@ cd ..
 ./scripts/musher-apply.sh hello-http ghcr.io/YOUR-USERNAME/hello-http:0.1.0
 ```
 
-`musher-apply.sh` creates and publishes the Components, composes and publishes
-the Blueprint, and deploys it. It exists for one reason: a Blueprint references
-Components by id, and you do not have those ids until the Components exist — so
-something has to substitute them. Run it with `DRY_RUN=1` to see exactly what it
-would send without changing anything.
+`musher-apply.sh` publishes the Components, publishes the Blueprint, and
+deploys it. It exists for one reason: `blueprint.yaml` names each Component by
+its file (`./component.yaml`), the API names it by id and revision, and you do
+not have those until the Components are published — so something has to
+substitute them. Run it with `DRY_RUN=1` to see exactly what it would send
+without calling anything.
+
+Running it again is safe. Unchanged documents are reused, changed ones get the
+next revision, and an existing deployment of the same name moves to the new
+Blueprint revision.
 
 Every step it takes has a plain `curl` equivalent in each example's README.
 Nothing is hidden, and when the Musher CLI ships it will replace this script
@@ -89,14 +97,26 @@ once per registry host in **Console → Configuration → Registry Credentials**
 Musher matches it to any image whose host matches, so nothing in
 `component.yaml` changes.
 
+## Which versions these examples target
+
+The documents are [Musher specification](https://specifications.musher.dev) v2
+documents, and the script calls the [public API](https://api.musher.dev/openapi.json).
+Both are pinned in [`pins/`](./pins): the exact JSON Schema release of each
+specification family and a copy of the OpenAPI description, each with its
+checksum in [`pins/pins.json`](./pins/pins.json). CI validates every document
+against those schemas and every API call the script and the READMEs make
+against that OpenAPI, and a weekly job reports when upstream has moved past the
+pins. [CONTRIBUTING.md](./CONTRIBUTING.md#bumping-the-pins) says how to bump
+them.
+
 ## Documentation
 
 - [Getting started](https://docs.musher.dev/getting-started)
 - [Components](https://docs.musher.dev/concepts/components) ·
   [Blueprints](https://docs.musher.dev/concepts/blueprints) ·
   [Deployments](https://docs.musher.dev/concepts/deployments)
-- [Component specification](https://docs.musher.dev/reference/component-spec) ·
-  [Blueprint specification](https://docs.musher.dev/reference/blueprint-spec)
+- [Component specification](https://specifications.musher.dev/reference/component/v2/spec/) ·
+  [Blueprint specification](https://specifications.musher.dev/reference/blueprint/v2/spec/)
 
 ## Contributing
 
