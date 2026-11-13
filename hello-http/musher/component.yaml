@@ -1,38 +1,50 @@
-# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/component-create
+# yaml-language-server: $schema=https://specifications.musher.dev/component/v2/component.schema.json
 #
 # A Component is the reusable, versioned definition of one workload. It is a
 # definition, not a running app — you deploy a Blueprint, and a Blueprint
 # references Components.
 #
-# ${IMAGE_REF} is substituted by scripts/musher-apply.sh from the image you
-# built and pushed. Nothing else in this file needs editing.
-specVersion: v1
+# `this-dockerfile.invalid/...` stands for the image built from this example's
+# Dockerfile. scripts/musher-apply.sh replaces it with the image you built and
+# pushed, so nothing in this file needs editing. It is a real image reference,
+# so the file stays a valid document, and `.invalid` is a domain that never
+# resolves, so a copy applied without the substitution fails loudly instead of
+# pulling someone else's image.
+specVersion: v2
 kind: COMPONENT
 metadata:
-  slug: hello-http
-  # `version` is deliberately omitted. Musher allocates the next version in this
-  # slug's lineage, so re-applying after an edit gives you v2 rather than a
-  # conflict, and the old version keeps serving until you deploy the new one.
+  # A Component document has no slug: a Blueprint names it by its file, and
+  # the apply script names it in your library after its file and example.
+  #
+  # `revision` orders this Component's publications and must rise with each
+  # one. The apply script replaces it with the next free revision, so
+  # re-applying after an edit gives you revision 2 rather than a conflict, and
+  # revision 1 keeps serving until you deploy revision 2.
+  revision: 1
+  # Required to publish. It is what someone composing a Blueprint reads.
+  description: Minimal HTTP service with one endpoint and a readiness probe.
 spec:
+  type: SERVICE # SERVICE | WORKER | JOB | EXTERNAL
   workload:
-    kind: SERVICE # SERVICE | WORKER | JOB | CRON
     source:
-      type: IMAGE
-      ref: ${IMAGE_REF}
+      image: this-dockerfile.invalid/hello-http
     endpoints:
       primary:
-        containerPort: 8080
-        # Both of these are required on the wire — there are no defaults, and
-        # omitting either is a 422.
+        # The port the process listens on. The public port is the platform's to
+        # allocate, never yours.
+        targetPort: 8080
+        # Required — there is no default protocol.
         protocol: HTTP
-        visibility: PUBLIC # PUBLIC gets a routable URL; PRIVATE stays on the mesh
+        # Note what is absent: visibility. A Component declares endpoints; the
+        # Blueprint decides which of them are public.
     health:
-      # A SERVICE with a PUBLIC endpoint must declare a readiness probe. Musher
-      # holds traffic off an instance until this passes, so it is also what makes
-      # a redeploy seamless rather than a brief 502.
+      # A Blueprint that exposes this endpoint PUBLIC must find a readiness
+      # probe here. Musher holds traffic off an instance until it passes, so it
+      # is also what makes a redeploy seamless rather than a brief 502.
       readiness:
-        path: /healthz
-        endpoint: primary
+        http:
+          endpoint: primary
+          path: /healthz
         initialDelaySeconds: 5
         periodSeconds: 10
         timeoutSeconds: 5

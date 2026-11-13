@@ -1,57 +1,55 @@
-# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/component-create
+# yaml-language-server: $schema=https://specifications.musher.dev/component/v2/component.schema.json
 #
 # The workload this repository builds. It declares that it needs a cache URL,
 # and says nothing about where that URL comes from — the Blueprint decides.
-specVersion: v1
+specVersion: v2
 kind: COMPONENT
 metadata:
-  slug: counter-web
+  revision: 1
+  description: Visit counter that keeps its count in Redis.
 spec:
+  type: SERVICE
   workload:
-    kind: SERVICE
     source:
-      type: IMAGE
-      ref: ${IMAGE_REF}
+      image: this-dockerfile.invalid/counter-with-cache
     endpoints:
       primary:
-        containerPort: 8080
+        targetPort: 8080
         protocol: HTTP
-        visibility: PUBLIC
     health:
       readiness:
         # This probe talks to the cache. An instance that cannot reach its
         # cache cannot serve a request, so it should not be in rotation —
         # see the note in src/app.py.
-        path: /healthz
-        endpoint: primary
+        http:
+          endpoint: primary
+          path: /healthz
         initialDelaySeconds: 5
         periodSeconds: 10
         timeoutSeconds: 5
         successThreshold: 1
         failureThreshold: 3
-    envVars:
-      - key: COUNTER_KEY
-        value:
-          type: LITERAL
-          value: visits
   contract:
     inputs:
-      # A declared need, not a configuration value. `suppliedBy: CONNECTION`
-      # means no human ever types this — it is filled by wiring the graph, and
-      # a Blueprint that leaves it unwired will not publish.
-      #
-      # Note what is absent: no `ui` block, because there is no install-form
-      # field for it. That is enforced, not conventional.
+      # A declared need. Nothing here says who supplies it: the same input
+      # could be a deploy-form field in one Blueprint and a wire in another.
+      # It is required (the default) and has no default value, so a Blueprint
+      # that binds nothing to it does not publish — the error names the input.
       cacheUrl:
-        schema:
-          type: STRING
-          format: CONNECTION_STRING
-          semanticType: REDIS
-        suppliedBy: CONNECTION
-        isRequired: true
-        # Where the resolved value lands in the container. Without a target
-        # the wire would validate and resolve to nothing the process can read.
-        target:
-          envVarKey: REDIS_URL
         description: Redis URL this service increments its counter in.
+        schema:
+          type: string
+        presentationHint: CONNECTION_STRING
+        # Where the resolved value lands in the container. An input with no
+        # target that nothing else reads is rejected as unused, so a wire can
+        # never resolve to nothing the process can read.
+        target:
+          envVar: REDIS_URL
+      counterKey:
+        description: Redis key the visit count is stored under.
+        schema:
+          type: string
+        default: visits
+        target:
+          envVar: COUNTER_KEY
     outputs: {}

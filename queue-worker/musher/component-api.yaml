@@ -1,50 +1,53 @@
-# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/component-create
+# yaml-language-server: $schema=https://specifications.musher.dev/component/v2/component.schema.json
 #
-# The front door: a SERVICE with a public endpoint that accepts work and
-# reports results. Same image as the worker, different ROLE.
-specVersion: v1
+# The front door: a SERVICE with an endpoint that accepts work and reports
+# results. Same image as the worker, different ROLE.
+specVersion: v2
 kind: COMPONENT
 metadata:
-  slug: queue-api
+  revision: 1
+  description: HTTP API that queues jobs in Redis and reports their results.
 spec:
+  type: SERVICE
   workload:
-    kind: SERVICE
     source:
-      type: IMAGE
-      ref: ${IMAGE_REF}
+      image: this-dockerfile.invalid/queue-worker
     endpoints:
       primary:
-        containerPort: 8080
+        targetPort: 8080
         protocol: HTTP
-        visibility: PUBLIC
     health:
       readiness:
-        path: /healthz
-        endpoint: primary
+        http:
+          endpoint: primary
+          path: /healthz
         initialDelaySeconds: 5
         periodSeconds: 10
         timeoutSeconds: 5
         successThreshold: 1
         failureThreshold: 3
-    envVars:
-      - key: ROLE
-        value:
-          type: LITERAL
-          value: api
-      - key: QUEUE_KEY
-        value:
-          type: LITERAL
-          value: jobs
   contract:
     inputs:
-      queueUrl:
+      role:
+        description: Which half of the app this process runs, api or worker.
         schema:
-          type: STRING
-          format: CONNECTION_STRING
-          semanticType: REDIS
-        suppliedBy: CONNECTION
-        isRequired: true
+          type: string
+          enum: [api]
+        default: api
         target:
-          envVarKey: REDIS_URL
+          envVar: ROLE
+      queueKey:
+        description: Redis list the jobs are pushed onto.
+        schema:
+          type: string
+        default: jobs
+        target:
+          envVar: QUEUE_KEY
+      queueUrl:
         description: Redis URL this service pushes jobs onto.
+        schema:
+          type: string
+        presentationHint: CONNECTION_STRING
+        target:
+          envVar: REDIS_URL
     outputs: {}

@@ -1,31 +1,28 @@
-# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/component-create
+# yaml-language-server: $schema=https://specifications.musher.dev/component/v2/component.schema.json
 #
 # The same public-image wrapper as counter-with-cache. One output, two
 # consumers this time.
-specVersion: v1
+specVersion: v2
 kind: COMPONENT
 metadata:
-  slug: queue-redis
+  revision: 1
+  description: Unauthenticated Redis on a private endpoint, used as a job queue by sibling nodes.
 spec:
+  type: SERVICE
   workload:
-    kind: SERVICE
     source:
-      type: IMAGE
-      ref: redis:7.4.2-alpine
+      image: redis:7.4.2-alpine
     endpoints:
       primary:
-        containerPort: 6379
+        targetPort: 6379
         protocol: TCP
-        visibility: PRIVATE
-    envVars: []
   contract:
     inputs: {}
     outputs:
       url:
-        schema:
-          type: STRING
-          format: CONNECTION_STRING
-          semanticType: REDIS
-        valueFrom: DECLARED
-        value: redis://{{ self.privateAddress.primary }}
         description: Mesh-internal Redis URL for sibling nodes in this deployment.
+        schema:
+          type: string
+        presentationHint: CONNECTION_STRING
+        from:
+          template: redis://${{ self.endpoints.primary.privateAddress }}

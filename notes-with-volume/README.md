@@ -2,8 +2,9 @@
 
 A tiny notes API whose data survives the container being replaced.
 
-**Teaches:** `volumes` claims · `mountPath` · `READ_WRITE_ONCE` vs
-`READ_WRITE_MANY` · why a readiness probe should check its storage.
+**Teaches:** `volumes` claims · `mountPath` · sizing in the Blueprint ·
+shared vs single-attach volumes · why a readiness probe should check its
+storage.
 
 **Assumes** you have been through [`hello-http`](../hello-http).
 
@@ -13,8 +14,9 @@ Container filesystems are disposable. Everything written inside a container is
 gone when that container is replaced — which happens on every redeploy, every
 restart, and whenever an instance moves to a different machine.
 
-A **Volume** is the exception. Declare a claim on the Component and Musher
-provisions real storage and mounts it at `mountPath`. Write there, and it stays.
+A **Volume** is the exception. Declare a claim on the Component, allocate it a
+size in the Blueprint, and Musher provisions real storage and mounts it at
+`mountPath`. Write there, and it stays.
 
 This app appends notes to `/data/notes.jsonl`. That is the only durable path in
 the container.
@@ -39,6 +41,7 @@ curl -fsS -X POST "$URL/notes" -d '{"text":"second note"}'
 curl -fsS "$URL/notes" | jq '.count'   # 2
 
 curl -fsS -X POST -H "Authorization: Bearer $MUSHER_API_KEY" \
+  -H "Content-Type: application/json" -d '{}' \
   "https://api.musher.dev/v1/deployments/$DEPLOYMENT_ID:restart"
 
 # once it is running again
@@ -61,20 +64,25 @@ docker rm -f notes && docker volume rm notes-data
 Now drop `-v notes-data:/data` and repeat. The count resets to zero, because
 without the volume `/data` is just another disposable directory.
 
-## What the spec says
+## What the specs say
 
 In [`musher/component.yaml`](./musher/component.yaml):
 
-- **Storage is declared on the Component, not the Blueprint.** The Blueprint
-  chooses how much compute each node gets; the Component knows what the workload
-  needs to keep. The Blueprint echoes the claim but cannot change it.
-- **`accessMode: READ_WRITE_ONCE`** gives this node its own block volume,
-  attached to one replica at a time — which is why this example deploys with
-  `replicas: 1`. `READ_WRITE_MANY` is the shared-filesystem alternative that
-  every replica can mount at once. Reach for RWX when replicas must see the same
+- **The claim is declared on the Component.** It knows what the workload needs
+  to keep and where it writes it: `mountPath`, and `minSizeGiB`, the smallest
+  allocation it can run with.
+- **`shared: false`** (the default) gives this node its own volume, mounted
+  into one replica at a time, including while it is replaced — which is why
+  this example deploys with `replicas: 1`. `shared: true` is the alternative
+  every replica mounts at once. Reach for it when replicas must see the same
   *files*; reach for a database when they must agree on the same *records*.
-- **`sizeGib: 1`** is the initial size. Size for what the workload will hold,
-  not for what it holds today.
+
+In [`musher/blueprint.yaml`](./musher/blueprint.yaml):
+
+- **The size is allocated per node**, like compute: `volumes.data.sizeGiB: 1`.
+  Every volume the Component declares must be allocated, at or above its
+  minimum; there is no implicit default size. Size for what the workload will
+  hold, not for what it holds today.
 
 Two things in [`Dockerfile`](./Dockerfile) and [`src/app.py`](./src/app.py) are
 easy to get wrong and painful to debug:
@@ -93,15 +101,15 @@ serve errors to users.
 
 ## Hack on it
 
-- **Scale to two replicas** and watch what happens. With `READ_WRITE_ONCE` the
-  second replica cannot attach the same volume — this is the constraint the
-  access mode exists to express, and meeting it deliberately is cheaper than
-  meeting it in production.
-- **Switch to `READ_WRITE_MANY`**, redeploy with `replicas: 2`, and post notes
+- **Deploy with two replicas** and read the refusal. A non-shared volume runs
+  one replica at a time, so the platform says no before anything starts — the
+  constraint `shared` exists to express, met deliberately rather than in
+  production.
+- **Switch to `shared: true`**, redeploy with `replicas: 2`, and post notes
   through both. Then look closely: two writers appending to one file with no
   coordination is exactly the race the in-process lock cannot protect you from.
 - **Add a second volume** for uploads at a different `mountPath`. A Component
-  may claim more than one.
+  may claim more than one, and the Blueprint allocates each.
 - **Delete the deployment** and read the volume's lifecycle in the console
   before you confirm.
 

@@ -1,32 +1,37 @@
-# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/blueprint-compose
+# yaml-language-server: $schema=https://specifications.musher.dev/blueprint/v2/blueprint.schema.json
 #
 # Three nodes, two wires — and one output feeding both consumers. An output is
 # not consumed by being wired; it can satisfy as many inputs as ask for it.
-specVersion: v1
+specVersion: v2
 kind: BLUEPRINT
 metadata:
   slug: queue-worker
+  revision: 1
+  description: A public job API and a worker, sharing one private Redis queue.
 spec:
-  components:
+  nodes:
     queue:
-      componentId: ${QUEUE_REDIS_COMPONENT_ID}
-      componentVersion: ${QUEUE_REDIS_COMPONENT_VERSION}
-      size: general.standard.small
-      connections: {}
+      componentRef: ./component-redis.yaml
+      compute:
+        profile: general.standard.small
     api:
-      componentId: ${QUEUE_API_COMPONENT_ID}
-      componentVersion: ${QUEUE_API_COMPONENT_VERSION}
-      size: general.standard.small
-      connections:
+      componentRef: ./component-api.yaml
+      compute:
+        profile: general.standard.small
+      exposure:
+        primary: PUBLIC
+      bindings:
         queueUrl:
-          fromRole: queue
-          fromOutput: url
+          node: queue
+          output: url
     worker:
-      componentId: ${QUEUE_WORKER_COMPONENT_ID}
-      componentVersion: ${QUEUE_WORKER_COMPONENT_VERSION}
-      size: general.standard.small
-      connections:
+      componentRef: ./component-worker.yaml
+      # A WORKER runs, so it needs compute like any SERVICE. Only an EXTERNAL
+      # node, which runs nothing, carries none.
+      compute:
+        profile: general.standard.small
+      bindings:
         queueUrl:
-          fromRole: queue
-          fromOutput: url
+          node: queue
+          output: url
   parameters: {}
