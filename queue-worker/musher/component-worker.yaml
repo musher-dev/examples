@@ -1,43 +1,52 @@
-# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/component-create
+# yaml-language-server: $schema=https://specifications.musher.dev/component/v2/component.schema.json
 #
 # A workload with nothing to route to.
 #
-# `kind: WORKER` is the whole declaration: long-running like a SERVICE, but it
-# accepts no traffic. Musher enforces that — a WORKER that declares an endpoint
-# is rejected, because the platform would have no honest way to route to it.
+# `type: WORKER` is the whole declaration: long-running like a SERVICE, but not
+# request-driven. A WORKER may still declare endpoints — a private health port
+# the platform probes, or a port sibling nodes call — but never a PUBLIC one: a
+# Blueprint that exposes a WORKER endpoint is rejected. This one declares none,
+# because nothing needs to reach it.
 #
-# There is also no readiness probe. Readiness gates *routing*, and nothing
-# routes here. What tells you a worker is healthy is its logs and the queue
+# So there is no readiness probe either. Readiness gates *routing*, and nothing
+# routes here. What tells you this worker is healthy is its logs and the queue
 # depth it is keeping down, not an HTTP 200.
-specVersion: v1
+#
+# Known issue: the platform currently stops a WORKER that declares no endpoint
+# about 15 seconds after it starts (musher-dev/platform-api#1440, fix in
+# progress). See the README; do not add an endpoint just to work around it.
+specVersion: v2
 kind: COMPONENT
 metadata:
-  slug: queue-worker
+  revision: 1
+  description: Queue consumer that pops jobs from Redis and stores their results. Serves no traffic.
 spec:
+  type: WORKER
   workload:
-    kind: WORKER
     source:
-      type: IMAGE
-      ref: ${IMAGE_REF}
-    envVars:
-      - key: ROLE
-        value:
-          type: LITERAL
-          value: worker
-      - key: QUEUE_KEY
-        value:
-          type: LITERAL
-          value: jobs
+      image: this-dockerfile.invalid/queue-worker
   contract:
     inputs:
-      queueUrl:
+      role:
+        description: Which half of the app this process runs, api or worker.
         schema:
-          type: STRING
-          format: CONNECTION_STRING
-          semanticType: REDIS
-        suppliedBy: CONNECTION
-        isRequired: true
+          type: string
+          enum: [worker]
+        default: worker
         target:
-          envVarKey: REDIS_URL
+          envVar: ROLE
+      queueKey:
+        description: Redis list the jobs are popped from.
+        schema:
+          type: string
+        default: jobs
+        target:
+          envVar: QUEUE_KEY
+      queueUrl:
         description: Redis URL this worker pulls jobs from.
+        schema:
+          type: string
+        presentationHint: CONNECTION_STRING
+        target:
+          envVar: REDIS_URL
     outputs: {}

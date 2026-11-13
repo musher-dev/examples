@@ -1,22 +1,45 @@
-# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/blueprint-compose
+# yaml-language-server: $schema=https://specifications.musher.dev/blueprint/v2/blueprint.schema.json
 #
-# ${CONFIGURABLE_GREETER_COMPONENT_ID} and the matching _VERSION are substituted
-# by scripts/musher-apply.sh from the Component it just published.
-specVersion: v1
+# The deploy form is authored here, in `parameters`, not derived from the
+# Component. A parameter is a value from outside the documents, and a node
+# reaches it through a `parameter` binding.
+specVersion: v2
 kind: BLUEPRINT
 metadata:
   slug: configurable-greeter
+  revision: 1
+  description: The configurable greeter, with a greeting on the deploy form and a generated admin token.
 spec:
-  components:
+  nodes:
     web:
-      componentId: ${CONFIGURABLE_GREETER_COMPONENT_ID}
-      componentVersion: ${CONFIGURABLE_GREETER_COMPONENT_VERSION}
-      size: general.standard.small
-      connections: {}
-  # Left empty on purpose. An empty `parameters` map means "derive the deploy
-  # form from the USER inputs of the Components in this graph" — so `greeting`
-  # and `adminToken` become that form without being restated here.
-  #
-  # Declare parameters explicitly only when the Blueprint needs to say something
-  # the Components cannot: renaming a field, or feeding one value to two nodes.
-  parameters: {}
+      componentRef: ./component.yaml
+      compute:
+        profile: general.standard.small
+      exposure:
+        primary: PUBLIC
+      bindings:
+        greeting:
+          parameter: greeting
+        adminToken:
+          parameter: adminToken
+        # `buildChannel` is not bound, so it takes the Component's default.
+  parameters:
+    greeting:
+      # A submitted parameter: `ui` puts it on the deploy form, and `default`
+      # is what a deployer who changes nothing gets. A parameter declares no
+      # schema of its own; the inputs it binds own the value schema.
+      ui:
+        label: Greeting
+      default: Hello from Musher
+    adminToken:
+      # A generated parameter. The platform mints `byteLength` random bytes at
+      # deploy time and encodes them; the deployer never types it, and
+      # submitting a value for it is refused. Its `ui` label is not a form
+      # field — a generated parameter never is one. It is what lets the people
+      # who manage the deployment reveal the token later; without a label the
+      # value is the workload's alone.
+      generator:
+        byteLength: 32
+        encoding: BASE64URL # HEX | BASE64 | BASE64URL
+      ui:
+        label: Admin token

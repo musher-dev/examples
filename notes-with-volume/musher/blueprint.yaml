@@ -1,18 +1,23 @@
-# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/blueprint-compose
-#
-# ${NOTES_WITH_VOLUME_COMPONENT_ID} and the matching _VERSION are substituted by
-# scripts/musher-apply.sh from the Component it just published.
-specVersion: v1
+# yaml-language-server: $schema=https://specifications.musher.dev/blueprint/v2/blueprint.schema.json
+specVersion: v2
 kind: BLUEPRINT
 metadata:
   slug: notes-with-volume
+  revision: 1
+  description: The notes API with a 1 GiB volume, publicly reachable, on one small node.
 spec:
-  components:
+  nodes:
     web:
-      componentId: ${NOTES_WITH_VOLUME_COMPONENT_ID}
-      componentVersion: ${NOTES_WITH_VOLUME_COMPONENT_VERSION}
-      size: general.standard.small
-      connections: {}
-  # Volumes are not declared here. The Blueprint echoes what the Component asked
-  # for; it does not get to change it.
+      componentRef: ./component.yaml
+      compute:
+        profile: general.standard.small
+      # Every volume the Component declares must be allocated here, explicitly,
+      # at or above its `minSizeGiB`. There is no implicit default size: what
+      # you pay to store is never a surprise. Size for what the workload will
+      # hold, not for what it holds today.
+      volumes:
+        data:
+          sizeGiB: 1
+      exposure:
+        primary: PUBLIC
   parameters: {}

@@ -1,28 +1,32 @@
-# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/blueprint-compose
+# yaml-language-server: $schema=https://specifications.musher.dev/blueprint/v2/blueprint.schema.json
 #
 # Two nodes and one wire. This is the file that makes them an application
 # rather than two containers that happen to be deployed together.
-specVersion: v1
+specVersion: v2
 kind: BLUEPRINT
 metadata:
   slug: counter-with-cache
+  revision: 1
+  description: A public visit counter wired to a private Redis cache.
 spec:
-  components:
+  nodes:
     cache:
-      componentId: ${COUNTER_CACHE_COMPONENT_ID}
-      componentVersion: ${COUNTER_CACHE_COMPONENT_VERSION}
-      size: general.standard.small
-      connections: {}
+      componentRef: ./component-cache.yaml
+      compute:
+        profile: general.standard.small
+      # No `exposure`: the cache's endpoint stays PRIVATE.
     web:
-      componentId: ${COUNTER_WEB_COMPONENT_ID}
-      componentVersion: ${COUNTER_WEB_COMPONENT_VERSION}
-      size: general.standard.small
-      # Connections are anchored on the consumer and keyed by the input they
+      componentRef: ./component-web.yaml
+      compute:
+        profile: general.standard.small
+      exposure:
+        primary: PUBLIC
+      # Bindings are anchored on the consumer and keyed by the input they
       # fill, so you read them as "cacheUrl comes from the cache node's url
-      # output". One input, one wire — a second entry for `cacheUrl` is a
+      # output". One input, one binding — a second origin for `cacheUrl` is a
       # conflict, not an override.
-      connections:
+      bindings:
         cacheUrl:
-          fromRole: cache
-          fromOutput: url
+          node: cache
+          output: url
   parameters: {}

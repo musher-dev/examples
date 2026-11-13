@@ -1,75 +1,73 @@
-# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/component-create
+# yaml-language-server: $schema=https://specifications.musher.dev/component/v2/component.schema.json
 #
 # The same workload as hello-http, plus a contract. `contract.inputs` is what
-# turns a fixed image into something the deployer configures — each USER input
-# becomes a field on the deploy form, and lands in the container as the
-# environment variable named by `target.envVarKey`.
-specVersion: v1
+# turns a fixed image into something a deployment configures — each input lands
+# in the container as the environment variable named by `target.envVar`, and
+# nothing else writes the container's environment.
+#
+# The Component only says what it needs. Where each value comes from — the
+# deploy form, a generated secret, another node — is the Blueprint's to say.
+specVersion: v2
 kind: COMPONENT
 metadata:
-  slug: configurable-greeter
+  revision: 1
+  description: HTTP greeter whose greeting, release channel and admin token arrive as inputs.
 spec:
+  type: SERVICE
   workload:
-    kind: SERVICE
     source:
-      type: IMAGE
-      ref: ${IMAGE_REF}
+      image: this-dockerfile.invalid/configurable-greeter
     endpoints:
       primary:
-        containerPort: 8080
+        targetPort: 8080
         protocol: HTTP
-        visibility: PUBLIC
     health:
       readiness:
-        path: /healthz
-        endpoint: primary
+        http:
+          endpoint: primary
+          path: /healthz
         initialDelaySeconds: 5
         periodSeconds: 10
         timeoutSeconds: 5
         successThreshold: 1
         failureThreshold: 3
-    envVars:
-      # A LITERAL is fixed by the Component — the same for every deployment of
-      # it. Use these for build/runtime facts, never for anything secret or
-      # anything a deployer should choose. Those are inputs, below.
-      - key: BUILD_CHANNEL
-        value:
-          type: LITERAL
-          value: stable
   contract:
     inputs:
-      greeting:
-        # A plain USER input: a field on the deploy form with a default, so a
-        # deployer can accept it and move on.
+      buildChannel:
+        # A value that does not vary between deployments is still an input: one
+        # with a `default`. A Blueprint that binds nothing to it gets the
+        # default, and nobody is asked. Use these for runtime facts, never for
+        # anything secret. A value that must never be overridden belongs in the
+        # image instead.
+        description: Release channel the service reports on its home page.
         schema:
-          type: STRING
-          default: Hello from Musher
-        isRequired: true
-        suppliedBy: USER
-        ui:
-          label: Greeting
+          type: string
+        default: stable
         target:
-          envVarKey: GREETING
+          envVar: BUILD_CHANNEL
+
+      greeting:
+        # A plain input with a default. The Blueprint offers it on the deploy
+        # form, so a deployer can accept the default and move on.
         description: Shown on the home page. Change it and redeploy to see it update.
+        schema:
+          type: string
+          minLength: 1
+        default: Hello from Musher
+        target:
+          envVar: GREETING
 
       adminToken:
-        # A generated secret. `generator` means the platform mints the value at
-        # deploy time — the deployer never types it, it is never in this repo or
-        # in the image, and the deploy form does not ask for it.
-        #
-        # A sensitive input must not carry a `default`: a default would have to
-        # be stored and echoed, which is exactly what a secret must not be.
+        # A secret. `sensitive` keeps the value masked everywhere the platform
+        # shows it. A sensitive input must not carry a `default`: a default
+        # would be published with this document, which is exactly what a secret
+        # must not be. The Blueprint feeds it from a generated parameter, so
+        # the value is minted at deploy time and is never in this repository or
+        # in the image.
+        description: Token the /admin route requires. Generated per deployment.
         schema:
-          type: STRING
-          isSensitive: true
-        isRequired: true
-        suppliedBy: USER
-        ui:
-          label: Admin token
-        generator:
-          byteLength: 32
-          encoding: BASE64URL # HEX | BASE64 | BASE64URL | ALPHANUMERIC
+          type: string
+        sensitive: true
         target:
-          envVarKey: ADMIN_TOKEN
-        description: Auto-generated. Read it from the deployment's environment view.
+          envVar: ADMIN_TOKEN
     outputs: {}

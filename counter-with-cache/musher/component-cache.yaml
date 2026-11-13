@@ -1,49 +1,52 @@
-# yaml-language-server: $schema=https://api.musher.dev/v1/schemas/component-create
+# yaml-language-server: $schema=https://specifications.musher.dev/component/v2/component.schema.json
 #
 # A Component you do not build. This wraps the public Redis image and declares
 # what it offers the rest of the graph — which is the whole reason backing
 # services are Components and not a special kind of platform add-on.
-specVersion: v1
+specVersion: v2
 kind: COMPONENT
 metadata:
-  slug: counter-cache
+  revision: 1
+  description: Unauthenticated Redis cache on a private endpoint, for sibling nodes of one deployment.
 spec:
+  type: SERVICE
   workload:
-    kind: SERVICE
     source:
-      type: IMAGE
-      # Pinned, like every other image reference on the platform. Publish
-      # rejects `redis:alpine` for the same reason it rejects `:latest`.
-      ref: redis:7.4.2-alpine
+      # Pinned, like every image reference you should write. Musher accepts a
+      # moving tag such as `redis:alpine`, but then two deployments of the same
+      # revision can run different code; only a version (or a digest) says what
+      # you tested. CI in this repository rejects floating tags.
+      image: redis:7.4.2-alpine
     endpoints:
       primary:
-        containerPort: 6379
+        targetPort: 6379
         protocol: TCP
-        # PRIVATE means mesh-only: reachable by sibling nodes in this
-        # deployment, never routable from the internet. A cache with a public
-        # URL is a cache someone else is using.
-        visibility: PRIVATE
-    envVars: []
+        # No exposure is declared here, and the Blueprint leaves this endpoint
+        # out of its `exposure`, so it is PRIVATE: reachable by sibling nodes
+        # in this deployment, never routable from the internet. A cache with a
+        # public URL is a cache someone else is using.
+        #
+        # No readiness probe either. Only a PUBLIC URL-addressed endpoint must
+        # declare one, and a probe needs an HTTP endpoint to ask.
   contract:
     inputs: {}
     outputs:
       # What this node publishes for consumers to wire.
       #
-      # DECLARED (not DERIVED) because the value is a template this Component
-      # authors: `{{ self.privateAddress.primary }}` resolves to the mesh
-      # address of the endpoint named `primary` — `counter-cache-<app>.internal:6379`
-      # — at the moment the deployment is composed. `self.*` can only ever
-      # reference this node's own bindings and addressing, never something it
-      # was handed over a wire, which is what lets Musher resolve every node's
-      # outputs before wiring any of them.
+      # A `template` builds a string from this node's own endpoints:
+      # `${{ self.endpoints.primary.privateAddress }}` resolves to the mesh
+      # `host:port` of the endpoint named `primary`. `self` can only ever
+      # reference this node's own endpoints, never something it was handed over
+      # a wire, which is what lets Musher resolve every node's addresses before
+      # wiring any of them.
       url:
-        schema:
-          type: STRING
-          format: CONNECTION_STRING
-          # A Redis URL and a Postgres DSN are both CONNECTION_STRINGs and are
-          # not interchangeable. semanticType is what says so, and the publish
-          # gate rejects a wire whose two ends disagree.
-          semanticType: REDIS
-        valueFrom: DECLARED
-        value: redis://{{ self.privateAddress.primary }}
         description: Mesh-internal Redis URL for sibling nodes in this deployment.
+        schema:
+          type: string
+        # A hint for how to present the value; it asserts nothing. A Redis URL
+        # and a Postgres DSN are both strings, and the platform only checks that
+        # the two ends of a wire have the same logical type — so the input's
+        # description is what tells a reader which URL it wants.
+        presentationHint: CONNECTION_STRING
+        from:
+          template: redis://${{ self.endpoints.primary.privateAddress }}
